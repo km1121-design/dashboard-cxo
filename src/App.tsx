@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { AlertTriangle, BarChart3, CalendarDays, LayoutDashboard, Store } from 'lucide-react';
+import {
+  AlertTriangle,
+  BarChart3,
+  CalendarDays,
+  KeyRound,
+  LayoutDashboard,
+  Store,
+} from 'lucide-react';
+import { AccessSettingsDialog } from '@/components/AccessSettingsDialog';
 import { DailyReportModal } from '@/components/DailyReportModal';
 import { DailyView } from '@/components/DailyView';
 import { MonthlyView } from '@/components/MonthlyView';
@@ -8,6 +16,7 @@ import { TotalView } from '@/components/TotalView';
 import { STORE_NAME } from '@/constants/master';
 import { useMonthlyInputs } from '@/hooks/useMonthlyInputs';
 import { useSalesData } from '@/hooks/useSalesData';
+import { getStoredToken } from '@/lib/credentials';
 import { isGasConfigured, SYNC_INTERVAL_MS } from '@/lib/env';
 import type { ViewMode } from '@/types';
 import { toISODate, toMonthKey } from '@/utils/date';
@@ -23,6 +32,8 @@ export default function App() {
   const [date, setDate] = useState(() => toISODate(new Date()));
   const [month, setMonth] = useState(() => toMonthKey(toISODate(new Date())));
   const [reportOpen, setReportOpen] = useState(false);
+  // 接続情報が未設定なら初回に設定ダイアログを開く
+  const [settingsOpen, setSettingsOpen] = useState(() => !getStoredToken() && !isGasConfigured());
 
   const sales = useSalesData();
   const { inputs, update, allInputs } = useMonthlyInputs(month);
@@ -53,6 +64,15 @@ export default function App() {
                 onSync={() => void sales.sync()}
                 autoSyncAvailable={SYNC_INTERVAL_MS > 0}
               />
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="btn-ghost"
+                title="接続設定"
+              >
+                <KeyRound size={15} />
+                接続設定
+              </button>
               <button type="button" onClick={() => setReportOpen(true)} className="btn-primary">
                 <Store size={15} />
                 {STORE_NAME} 日報
@@ -89,9 +109,10 @@ export default function App() {
             <div className="text-sm text-amber-800">
               <p className="font-medium">GAS API URL が未設定です。</p>
               <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
-                <code className="rounded bg-amber-100 px-1">.env</code> に{' '}
+                右上の「接続設定」から URL とアクセストークンを入力してください。
+                ローカル開発では <code className="rounded bg-amber-100 px-1">.env</code> の{' '}
                 <code className="rounded bg-amber-100 px-1">VITE_GAS_API_URL</code>{' '}
-                （ウェブアプリの /exec URL）を設定して再起動してください。設定するまでデータは空のまま表示されます。
+                でも設定できます。設定するまでデータは空のまま表示されます。
               </p>
             </div>
           </div>
@@ -118,6 +139,13 @@ export default function App() {
 
         {mode === 'total' && <TotalView records={sales.records} inputsByMonth={allInputs} />}
       </main>
+
+      <AccessSettingsDialog
+        open={settingsOpen}
+        dismissable={isGasConfigured() || Boolean(getStoredToken())}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={() => void sales.sync()}
+      />
 
       <DailyReportModal
         open={reportOpen}

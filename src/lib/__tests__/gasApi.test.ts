@@ -117,6 +117,47 @@ describe('fetchSales', () => {
     expect(init.method).toBe('GET');
   });
 
+  it('トークンを指定するとクエリに token を付ける', async () => {
+    const mock = jest
+      .fn()
+      .mockResolvedValue(jsonResponse({ status: 'success', timestamp: '', count: 0, sales: [] }));
+
+    await fetchSales({ baseUrl: BASE_URL, token: 'secret123', fetchImpl: mock as unknown as typeof fetch });
+
+    const url = new URL(String(mock.mock.calls[0][0]));
+    expect(url.searchParams.get('token')).toBe('secret123');
+    expect(url.searchParams.get('t')).toBeTruthy();
+  });
+
+  it('トークン未指定なら token を付けない', async () => {
+    const mock = jest
+      .fn()
+      .mockResolvedValue(jsonResponse({ status: 'success', timestamp: '', count: 0, sales: [] }));
+
+    await fetchSales(makeConfig(mock));
+
+    const url = new URL(String(mock.mock.calls[0][0]));
+    expect(url.searchParams.has('token')).toBe(false);
+  });
+
+  it('GAS がトークン不一致を返したらそのまま伝える', async () => {
+    const mock = jest
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ status: 'error', message: 'アクセストークンが正しくありません。' }),
+      );
+
+    const result = await fetchSales({
+      baseUrl: BASE_URL,
+      token: 'wrong',
+      fetchImpl: mock as unknown as typeof fetch,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('アクセストークンが正しくありません');
+  });
+
   it('URL 未設定ならエラーを返す（例外は投げない）', async () => {
     const result = await fetchSales({ baseUrl: '' });
     expect(result).toEqual({
@@ -233,6 +274,27 @@ describe('postSale', () => {
     const [, init] = mock.mock.calls[0];
     expect(init.headers['Content-Type']).toBe('text/plain;charset=utf-8');
     expect(init.redirect).toBe('follow');
+  });
+
+  it('トークンを指定するとボディに token を含める', async () => {
+    const mock = jest.fn().mockResolvedValue(jsonResponse({ status: 'success', message: 'ok' }));
+
+    await postSale(
+      { baseUrl: BASE_URL, token: 'secret123', fetchImpl: mock as unknown as typeof fetch },
+      RECORD,
+    );
+
+    const [, init] = mock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ action: 'addSale', data: RECORD, token: 'secret123' });
+  });
+
+  it('トークン未指定ならボディに token を含めない', async () => {
+    const mock = jest.fn().mockResolvedValue(jsonResponse({ status: 'success', message: 'ok' }));
+
+    await postSale(makeConfig(mock), RECORD);
+
+    const [, init] = mock.mock.calls[0];
+    expect(JSON.parse(init.body)).not.toHaveProperty('token');
   });
 
   it('postDailyReport は addReport アクションで送る', async () => {

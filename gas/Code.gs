@@ -12,8 +12,63 @@
  *       次のユーザーとして実行 : 自分
  *       アクセスできるユーザー : 全員 (Anyone)   ← 必須（指示書 8章）
  *  4. 発行された /exec URL を フロント側の .env の VITE_GAS_API_URL に設定する
+ *
+ * ■ 社内限定にする（アクセストークンの設定）
+ *  デプロイの「アクセスできるユーザー」は仕様上「全員」にする必要があるため、
+ *  URL を知っていれば誰でも読み書きできてしまう。これを防ぐには合言葉を設定する。
+ *
+ *  Apps Script エディタ → 左メニュー「プロジェクトの設定」（歯車）
+ *    → 「スクリプト プロパティ」→「スクリプト プロパティを追加」
+ *        プロパティ : AUTH_TOKEN
+ *        値         : 推測されにくい文字列（例: 32文字程度のランダムな英数字）
+ *
+ *  設定するとトークンが一致するリクエストしか受け付けなくなる。
+ *  未設定の場合は従来どおり誰でもアクセスできる（後方互換のため）。
+ *  トークンを作るには、このエディタで generateAuthToken() を実行して
+ *  実行ログに出た文字列を使うとよい。
  */
 const SHEET_NAME_SALES = 't_sales';
+const AUTH_TOKEN_PROPERTY = 'AUTH_TOKEN';
+
+/**
+ * スクリプトプロパティに設定されたトークンを返す。未設定なら空文字。
+ */
+function getExpectedToken() {
+  const value = PropertiesService.getScriptProperties().getProperty(AUTH_TOKEN_PROPERTY);
+  return value ? String(value).trim() : '';
+}
+
+/**
+ * リクエストのトークンを検証する。
+ * トークン未設定時は認証なしで通す（後方互換）。
+ */
+function isAuthorized(token) {
+  const expected = getExpectedToken();
+  if (!expected) return true;
+  return String(token || '').trim() === expected;
+}
+
+/** 認証エラーのレスポンス */
+function unauthorizedResponse() {
+  return ContentService.createTextOutput(
+    JSON.stringify({ status: 'error', message: 'アクセストークンが正しくありません。' })
+  ).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * ランダムなトークンを生成してログに出力する（初期設定用のユーティリティ）。
+ * エディタ上でこの関数を実行し、出力された文字列を
+ * スクリプトプロパティ AUTH_TOKEN に貼り付けて使う。
+ */
+function generateAuthToken() {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let token = '';
+  for (let i = 0; i < 32; i++) {
+    token += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  Logger.log('AUTH_TOKEN に設定する値: ' + token);
+  return token;
+}
 
 function getOrCreateSalesSheet(ss) {
   let sheet = ss.getSheetByName(SHEET_NAME_SALES);
@@ -31,6 +86,11 @@ function getOrCreateSalesSheet(ss) {
 
 function doGet(e) {
   try {
+    // クエリパラメータ ?token=... を検証する
+    if (!isAuthorized(e && e.parameter ? e.parameter.token : '')) {
+      return unauthorizedResponse();
+    }
+
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const salesSheet = getOrCreateSalesSheet(ss);
     const salesData = getSheetDataAsJson(salesSheet);
@@ -60,6 +120,11 @@ function doPost(e) {
     }
 
     const postData = JSON.parse(e.postData.contents);
+
+    // ボディの token を検証する
+    if (!isAuthorized(postData.token)) {
+      return unauthorizedResponse();
+    }
 
     if (postData.action === 'addSale' || postData.action === 'addReport') {
       const record = postData.data || {};
