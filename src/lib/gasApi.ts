@@ -101,8 +101,11 @@ export async function fetchSales(config: GasApiConfig): Promise<ApiResult<GasGet
   }
 
   try {
-    // キャッシュ回避のためタイムスタンプを付与する
-    const url = `${config.baseUrl}${config.baseUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    // キャッシュ回避のためタイムスタンプを、認証のためトークンを付与する
+    const params = new URLSearchParams({ t: String(Date.now()) });
+    if (config.token) params.set('token', config.token);
+    const url = `${config.baseUrl}${config.baseUrl.includes('?') ? '&' : '?'}${params.toString()}`;
+
     const res = await fetchWithTimeout(config, url, {
       method: 'GET',
       redirect: 'follow',
@@ -158,6 +161,7 @@ export async function postSale(
   }
 
   const body: GasPostBody = { action, data: record };
+  if (config.token) body.token = config.token;
 
   try {
     const res = await fetchWithTimeout(config, config.baseUrl, {

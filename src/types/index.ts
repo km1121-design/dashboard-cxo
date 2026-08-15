@@ -156,12 +156,19 @@ export type GasAction = 'addSale' | 'addReport';
 export interface GasPostBody {
   action: GasAction;
   data: SaleRecordInput;
+  /** アクセストークン。GAS 側で AUTH_TOKEN が設定されている場合に必須 */
+  token?: string;
 }
 
 /** gasApi のクライアント設定 */
 export interface GasApiConfig {
   /** ウェブアプリのデプロイ URL（/exec） */
   baseUrl: string;
+  /**
+   * アクセストークン（GAS の スクリプトプロパティ AUTH_TOKEN と一致させる）。
+   * ビルドには埋め込まず、利用者が画面から入力した値を渡す。
+   */
+  token?: string;
   /** タイムアウト（ミリ秒）。既定 15000 */
   timeoutMs?: number;
   /**

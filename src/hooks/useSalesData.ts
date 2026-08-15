@@ -24,22 +24,29 @@ export interface UseSalesDataResult {
   setAutoSync: (value: boolean) => void;
 }
 
-export function useSalesData(config: GasApiConfig = getDefaultConfig()): UseSalesDataResult {
+/**
+ * @param config 省略時は毎回 `getDefaultConfig()` を読み直す。
+ *   接続設定（トークン・URL）は画面から変更できるため、
+ *   固定した設定を保持せず、同期のたびに最新の値を取得する。
+ */
+export function useSalesData(config?: GasApiConfig): UseSalesDataResult {
   const [records, setRecords] = useState<SaleRecord[]>([]);
   const [state, setState] = useState<SyncState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [autoSync, setAutoSync] = useState<boolean>(SYNC_INTERVAL_MS > 0);
 
-  // config はレンダーごとに新しいオブジェクトになり得るため ref に固定する
+  // 明示的に渡された設定は ref に保持し、無ければ都度 getDefaultConfig() を読む
   const configRef = useRef(config);
   configRef.current = config;
+
+  const resolveConfig = useCallback((): GasApiConfig => configRef.current ?? getDefaultConfig(), []);
 
   const sync = useCallback(async () => {
     setState('loading');
     setError(null);
 
-    const result = await fetchSales(configRef.current);
+    const result = await fetchSales(resolveConfig());
 
     if (result.ok) {
       setRecords(result.data.sales);
@@ -49,7 +56,7 @@ export function useSalesData(config: GasApiConfig = getDefaultConfig()): UseSale
       setError(result.error);
       setState('error');
     }
-  }, []);
+  }, [resolveConfig]);
 
   const post = useCallback(
     async (record: SaleRecordInput, kind: 'sale' | 'report'): Promise<boolean> => {
@@ -57,7 +64,7 @@ export function useSalesData(config: GasApiConfig = getDefaultConfig()): UseSale
       setError(null);
 
       const send = kind === 'report' ? postDailyReport : postSale;
-      const result = await send(configRef.current, record);
+      const result = await send(resolveConfig(), record);
 
       if (!result.ok) {
         setError(result.error);
@@ -69,7 +76,7 @@ export function useSalesData(config: GasApiConfig = getDefaultConfig()): UseSale
       await sync();
       return true;
     },
-    [sync],
+    [sync, resolveConfig],
   );
 
   const addSale = useCallback((r: SaleRecordInput) => post(r, 'sale'), [post]);
