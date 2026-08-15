@@ -1,0 +1,66 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pages への書き込みに必要な権限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時デプロイを防ぐ（実行中のものは完了させる）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ビルド
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Node.js のセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存関係のインストール
+        run: npm ci
+
+      - name: 本番ビルド
+        env:
+          # リポジトリ名のサブパス配下に公開されるため base を渡す
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          # Settings → Secrets and variables → Actions → Variables で設定する
+          VITE_GAS_API_URL: ${{ vars.VITE_GAS_API_URL }}
+          VITE_SYNC_INTERVAL_MS: ${{ vars.VITE_SYNC_INTERVAL_MS }}
+        run: npm run build
+
+      - name: Pages の設定
+        uses: actions/configure-pages@v5
+
+      - name: 成果物のアップロード
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: デプロイ
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: GitHub Pages へデプロイ
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -36,6 +36,47 @@ npm run dev               # http://localhost:5173
 
 `VITE_SYNC_INTERVAL_MS` を設定すると自動同期が有効になる（未設定・0 なら手動同期のみ）。
 
+## 公開（GitHub Pages）
+
+ローカル環境を用意しなくても、GitHub 上の操作だけで公開できる。
+`main` へのプッシュごとに自動でビルド・デプロイされる（`.github/workflows/deploy.yml`）。
+
+### 初回だけ必要な設定（GitHub の画面で 2 箇所）
+
+**1. GAS の URL を登録する**
+
+`Settings` → `Secrets and variables` → `Actions` → `Variables` タブ → `New repository variable`
+
+| Name | Value |
+| --- | --- |
+| `VITE_GAS_API_URL` | GAS ウェブアプリの `/exec` URL |
+| `VITE_SYNC_INTERVAL_MS` | 自動同期の間隔（任意・例 `180000`。不要なら登録しない） |
+
+**2. Pages を有効にする**
+
+`Settings` → `Pages` → `Build and deployment` → `Source` を **GitHub Actions** に変更
+
+以降、`Actions` タブでデプロイの進行を確認できる。完了すると次の URL で公開される。
+
+```
+https://<オーナー名>.github.io/<リポジトリ名>/
+```
+
+設定を変えた後に再デプロイしたいときは、`Actions` → `Deploy to GitHub Pages` → `Run workflow` で手動実行できる。
+
+### 公開範囲についての注意
+
+`VITE_` 付きの環境変数は**ビルド時に JavaScript へ埋め込まれ、ブラウザから読み取れる**。
+GitHub Pages で公開すると GAS の URL も実質的に公開されることになり、
+URL を知った第三者がスプレッドシートへ行を追記できる状態になる（GAS を
+「アクセスできるユーザー: 全員」でデプロイするため）。
+
+社内限定で使いたい場合は次のいずれかを検討すること。
+
+- GitHub Pages では公開せず、手元で `npm run dev` して使う
+- GAS 側に合言葉（トークン）チェックを追加し、`doPost` で照合する
+- リポジトリを Private にしたうえで Pages の公開範囲を絞る（GitHub の有料プランが必要）
+
 ## npm スクリプト
 
 | コマンド | 内容 |
