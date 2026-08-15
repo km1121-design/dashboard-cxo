@@ -6,12 +6,97 @@ Google Apps Script のコードを GitHub から自動デプロイするため�
 
 ---
 
+## 最初に決めること: 認証情報をどこに置くか
+
+`CLASP_CREDENTIALS`（Google の認証情報）は**複数のプロジェクトで使い回せる**。
+一方 `GAS_SCRIPT_ID` と `GAS_DEPLOYMENT_ID` は**プロジェクトごとに異なる**ので、
+どちらの方式でもリポジトリ単位で登録する。
+
+| 置き場所 | 2 個目以降のリポジトリで必要な作業 | 条件 |
+| --- | --- | --- |
+| **Organization Secret** | ID 2 つの登録のみ（`clasp login` 不要） | Organization アカウントが必要 |
+| リポジトリ Secret | 認証情報 ＋ ID 2 つの登録 | 条件なし |
+
+複数リポジトリで GAS を使うなら Organization 方式が楽。**次章を先に読むこと。**
+
+---
+
+## Organization にまとめる場合
+
+### 前提: Organization アカウントが必要
+
+**Organization Secret は Organization アカウントでのみ使える。**
+個人（User）アカウントのリポジトリには Organization Secret を設定できない
+（GitHub には「ユーザーレベルの Secret」という仕組みが存在しない）。
+
+自分のアカウントがどちらかは、次で確認できる。
+
+```bash
+gh api users/【自分のアカウント名】 --jq .type
+# → "Organization" なら Organization、"User" なら個人アカウント
+```
+
+### Organization を作る（無料）
+
+1. https://github.com/organizations/plan を開く
+2. **Free** プランを選ぶ
+3. Organization 名・連絡先メールを入力して作成
+
+### 既存リポジトリを Organization へ移す
+
+リポジトリ → **Settings** → 最下部の **Danger Zone** → **Transfer ownership**
+→ 移転先に Organization 名を指定
+
+> 移転後も元の URL からリダイレクトされ、`git remote` の設定を変えなくても動く。
+> ただし手元のクローンは `git remote set-url` で新 URL に更新しておくのが無難。
+
+### 認証情報を Organization に登録する
+
+```bash
+bash scripts/setup-gas-deploy.sh --org 【Organization名】
+```
+
+`gh` が使えない場合は画面から:
+
+`https://github.com/organizations/【Organization名】/settings/secrets/actions`
+→ **New organization secret**
+
+| 項目 | 値 |
+| --- | --- |
+| Name | `CLASP_CREDENTIALS` |
+| Repository access | **All repositories**（または対象リポジトリを選択） |
+| Value | `cat ~/.clasprc.json` の出力を全文 |
+
+### 2 個目以降のリポジトリ
+
+認証情報は Organization から自動で引き継がれるので、**ID 2 つを登録するだけ**。
+
+```bash
+gh variable set GAS_SCRIPT_ID     --body "【スクリプトID】"
+gh variable set GAS_DEPLOYMENT_ID --body "【デプロイID】"
+```
+
+セットアップスクリプトを `--org` 付きで実行しても同じ結果になる
+（認証情報は上書き登録され、ID はリポジトリに登録される）。
+
+> **プランについての注意**: Free プランの Organization Secret は
+> **パブリックリポジトリでは無制限に使える**が、プライベートリポジトリで使う場合は
+> 有料プラン（Team 以上）が必要になることがある。
+> プライベートで運用する予定がある場合は、実際に登録して動作を確認してから
+> 本格移行するのが安全。動かない場合はリポジトリ Secret 方式にすればよい。
+
+---
+
 ## かんたん手順（スクリプトを使う）
 
 リポジトリのルートで次を実行し、指示に従うだけ。
 
 ```bash
+# リポジトリごとに認証情報を持つ場合
 bash scripts/setup-gas-deploy.sh
+
+# Organization に認証情報をまとめる場合
+bash scripts/setup-gas-deploy.sh --org 【Organization名】
 ```
 
 スクリプトが行うこと:
@@ -205,6 +290,8 @@ gas/ を変更して main へ push
 | デプロイしても `/exec` の内容が変わらない | `GAS_DEPLOYMENT_ID` に `@HEAD` のデプロイを指定している。バージョン付きの方に変更する |
 | `Requested entity was not found` | `GAS_SCRIPT_ID` か `GAS_DEPLOYMENT_ID` の値が誤っている |
 | ワークフローが起動しない | `gas/` 配下を変更していない。手動実行するか `paths` を確認する |
+| `CLASP_CREDENTIALS(シークレット)` が未登録と言われる | Organization Secret の「Repository access」に対象リポジトリが含まれていない。`All repositories` にするか対象を追加する |
+| `--org` で登録が失敗する | 個人（User）アカウントには Organization Secret を設定できない。Organization を作るか、`--org` を外してリポジトリ単位で登録する |
 
 ---
 
@@ -263,7 +350,23 @@ docs/gas-deploy-setup.md           ← この手順書
 }
 ```
 
-> 同じ Google アカウントを使うなら、`CLASP_CREDENTIALS` は**プロジェクト間で使い回せる**。
-> 2 回目以降は `clasp login` を省略でき、スクリプト ID とデプロイ ID の登録だけで済む。
-> 複数リポジトリで共通化したい場合は、GitHub の Organization レベルの
-> Secret / Variable に登録するとリポジトリごとの登録が不要になる。
+### 2 個目以降の流れ（Organization にまとめている場合）
+
+```bash
+# 1. 3 ファイルをコピー
+cp -r ../dashboard-cxo/.github/workflows/deploy-gas.yml .github/workflows/
+cp    ../dashboard-cxo/scripts/setup-gas-deploy.sh      scripts/
+cp    ../dashboard-cxo/docs/gas-deploy-setup.md         docs/
+
+# 2. gas/ を用意（appsscript.json は上の雛形を使う）
+mkdir -p gas
+
+# 3. .gitignore に追記
+printf '.clasprc.json\n.clasp.json\n' >> .gitignore
+
+# 4. ID 2 つを登録（認証情報は Organization から引き継がれる）
+bash scripts/setup-gas-deploy.sh --org 【Organization名】
+```
+
+`clasp login` は初回に一度済ませていれば省略できる
+（スクリプトはログイン済みを検出してスキップする）。

@@ -46,11 +46,22 @@ clasp のログインから GitHub への登録までを対話的に行う。
 必要な登録内容は以下の 3 つ。手動で登録する場合や、つまずいたときの対処は
 **[docs/gas-deploy-setup.md](docs/gas-deploy-setup.md)** に詳しく書いてある。
 
-| 種別 | Name | 内容 |
-| --- | --- | --- |
-| Secret | `CLASP_CREDENTIALS` | `~/.clasprc.json` の中身（`clasp login` で生成） |
-| Variable | `GAS_SCRIPT_ID` | Apps Script のスクリプト ID |
-| Variable | `GAS_DEPLOYMENT_ID` | 更新対象のデプロイ ID（`@HEAD` ではない方） |
+| 種別 | Name | 内容 | 単位 |
+| --- | --- | --- | --- |
+| Secret | `CLASP_CREDENTIALS` | `~/.clasprc.json` の中身（`clasp login` で生成） | 複数プロジェクトで共有可 |
+| Variable | `GAS_SCRIPT_ID` | Apps Script のスクリプト ID | プロジェクトごと |
+| Variable | `GAS_DEPLOYMENT_ID` | 更新対象のデプロイ ID（`@HEAD` ではない方） | プロジェクトごと |
+
+複数のリポジトリで GAS を使うなら、認証情報を Organization Secret にまとめておくと
+2 個目以降は ID 2 つの登録だけで済む。
+
+```bash
+bash scripts/setup-gas-deploy.sh --org 【Organization名】
+```
+
+> Organization Secret は **Organization アカウントでのみ利用できる**（個人アカウント不可）。
+> Organization の作り方・リポジトリの移し方は
+> [docs/gas-deploy-setup.md](docs/gas-deploy-setup.md#organization-にまとめる場合) を参照。
 
 > `CLASP_CREDENTIALS` は Google アカウントの Apps Script プロジェクトへアクセスできる資格情報。
 > 取り扱いに注意し、不要になったら `npx @google/clasp logout` と GitHub 側の削除を行うこと。
