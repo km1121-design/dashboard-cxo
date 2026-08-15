@@ -6,6 +6,16 @@
 # 対話的に進むので、指示に従って入力すればよい。
 #
 #   bash scripts/setup-gas-deploy.sh
+#   bash scripts/setup-gas-deploy.sh --org <Organization名>
+#   bash scripts/setup-gas-deploy.sh --script-id <スクリプトID>
+#
+# --org を付けると、複数リポジトリで共有できる認証情報（CLASP_CREDENTIALS）を
+# Organization の Secret として登録する。2 個目以降のリポジトリでは
+# 認証情報の登録が不要になり、プロジェクト固有の ID 2 つだけで済む。
+#
+#   ※ Organization Secret は Organization アカウントでのみ利用できる。
+#     個人（User）アカウントのリポジトリでは --org は使えないため、
+#     リポジトリごとの登録になる。詳細は docs/gas-deploy-setup.md を参照。
 #
 # gh コマンド（GitHub CLI）が使える場合は Secrets / Variables の登録まで自動で行う。
 # 無い場合は、画面に表示される内容を GitHub の設定画面に手で貼り付ける。
@@ -15,6 +25,33 @@ set -euo pipefail
 CLASP_VERSION="3.3.0"
 CLASP="npx --yes @google/clasp@${CLASP_VERSION}"
 CLASPRC="${HOME}/.clasprc.json"
+
+ORG=""
+SCRIPT_ID=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --org)
+      ORG="${2:-}"
+      [ -z "${ORG}" ] && { echo "--org には Organization 名が必要です。" >&2; exit 1; }
+      shift 2
+      ;;
+    --script-id)
+      SCRIPT_ID="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      # 先頭のコメントブロック（2行目〜最初の非コメント行の手前）をそのまま説明として出す
+      awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"
+      exit 0
+      ;;
+    *)
+      # 後方互換: 第 1 引数をスクリプト ID として受け取る
+      [ -z "${SCRIPT_ID}" ] && SCRIPT_ID="$1"
+      shift
+      ;;
+  esac
+done
 
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 info() { printf '  %s\n' "$1"; }
@@ -100,7 +137,6 @@ info "認証情報を確認しました"
 
 step 3 "スクリプト ID を指定する"
 
-SCRIPT_ID="${1:-}"
 if [ -z "${SCRIPT_ID}" ] && [ -f .clasp.json ]; then
   SCRIPT_ID="$(node -p "require('./.clasp.json').scriptId || ''" 2>/dev/null || echo '')"
   [ -n "${SCRIPT_ID}" ] && info ".clasp.json から取得: ${SCRIPT_ID}"
@@ -160,32 +196,73 @@ fi
 
 step 5 "GitHub に登録する"
 
+# 認証情報は複数プロジェクトで共有できるが、スクリプト ID とデプロイ ID は
+# プロジェクトごとに異なる。そのため --org 指定時も ID 2 つはリポジトリに登録する。
+
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  info "GitHub CLI で登録します。"
-  gh secret set CLASP_CREDENTIALS < "${CLASPRC}"
+  if [ -n "${ORG}" ]; then
+    info "認証情報を Organization「${ORG}」の Secret に登録します。"
+    if gh secret set CLASP_CREDENTIALS --org "${ORG}" --visibility all < "${CLASPRC}"; then
+      info "Organization Secret に登録しました（配下の全リポジトリで利用可）。"
+    else
+      err "Organization Secret の登録に失敗しました。"
+      warn "Organization アカウントであること、権限があることを確認してください。"
+      warn "個人アカウントの場合は --org を外して実行してください。"
+      exit 1
+    fi
+  else
+    info "認証情報をこのリポジトリの Secret に登録します。"
+    gh secret set CLASP_CREDENTIALS < "${CLASPRC}"
+  fi
+
+  # ID はプロジェクト固有なので常にリポジトリ単位
   gh variable set GAS_SCRIPT_ID --body "${SCRIPT_ID}"
   gh variable set GAS_DEPLOYMENT_ID --body "${DEPLOYMENT_ID}"
-  info "登録しました。"
+  info "スクリプト ID / デプロイ ID をこのリポジトリに登録しました。"
+
   echo
   bold "次のコマンドで自動デプロイを試せます:"
   echo "    gh workflow run 'Deploy GAS'"
 else
   warn "gh コマンドが無い（または未ログイン）ため、手動で登録してください。"
+
+  if [ -n "${ORG}" ]; then
+    cat <<EOS
+
+  [1] 認証情報（Organization 全体で共有・1 回だけ）
+
+      https://github.com/organizations/${ORG}/settings/secrets/actions
+          New organization secret
+          Name       : CLASP_CREDENTIALS
+          Repository access : All repositories（または対象リポジトリを選択）
+          Value      : 次のコマンドの出力をすべて貼り付け
+                           cat ${CLASPRC}
+
+EOS
+  else
+    cat <<EOS
+
+  [1] 認証情報（このリポジトリ）
+
+      リポジトリ → Settings → Secrets and variables → Actions
+          [Secrets タブ] New repository secret
+          Name : CLASP_CREDENTIALS
+          Value: 次のコマンドの出力をすべて貼り付け
+                     cat ${CLASPRC}
+
+EOS
+  fi
+
   cat <<EOS
+  [2] プロジェクト固有の ID（リポジトリごとに必要）
 
-  GitHub のリポジトリ → Settings → Secrets and variables → Actions
+      リポジトリ → Settings → Secrets and variables → Actions
+          [Variables タブ] New repository variable
+          Name : GAS_SCRIPT_ID
+          Value: ${SCRIPT_ID}
 
-  [Secrets タブ] New repository secret
-      Name : CLASP_CREDENTIALS
-      Value: 次のコマンドの出力をすべて貼り付け
-                 cat ${CLASPRC}
-
-  [Variables タブ] New repository variable
-      Name : GAS_SCRIPT_ID
-      Value: ${SCRIPT_ID}
-
-      Name : GAS_DEPLOYMENT_ID
-      Value: ${DEPLOYMENT_ID}
+          Name : GAS_DEPLOYMENT_ID
+          Value: ${DEPLOYMENT_ID}
 
   登録後、Actions → Deploy GAS → Run workflow で動作確認できます。
 
