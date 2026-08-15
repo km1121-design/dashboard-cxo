@@ -1,0 +1,103 @@
+name: Deploy GAS
+
+# gas/ 配下を変更して main に入れたときだけ Apps Script へ反映する。
+# pull_request では動かさない（Secrets を PR のワークフローに晒さないため）。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gas/**'
+      - '.github/workflows/deploy-gas.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-gas
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Apps Script へ push ＆ 再デプロイ
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Node.js のセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 設定の確認
+        env:
+          SCRIPT_ID: ${{ vars.GAS_SCRIPT_ID }}
+          DEPLOYMENT_ID: ${{ vars.GAS_DEPLOYMENT_ID }}
+          CREDENTIALS: ${{ secrets.CLASP_CREDENTIALS }}
+        run: |
+          missing=""
+          [ -z "$SCRIPT_ID" ]     && missing="$missing GAS_SCRIPT_ID(変数)"
+          [ -z "$DEPLOYMENT_ID" ] && missing="$missing GAS_DEPLOYMENT_ID(変数)"
+          [ -z "$CREDENTIALS" ]   && missing="$missing CLASP_CREDENTIALS(シークレット)"
+          if [ -n "$missing" ]; then
+            echo "::error::次の設定が未登録です:$missing"
+            echo "README の「GAS の自動デプロイ」を参照してください。"
+            exit 1
+          fi
+          echo "設定は揃っています。"
+
+      - name: clasp の認証情報を配置
+        env:
+          CREDENTIALS: ${{ secrets.CLASP_CREDENTIALS }}
+        run: |
+          printf '%s' "$CREDENTIALS" > .clasprc.json
+          # 中身はログに出さず、形だけを検証する
+          node -e "
+            const fs = require('fs');
+            let store;
+            try {
+              store = JSON.parse(fs.readFileSync('.clasprc.json', 'utf8'));
+            } catch {
+              console.error('CLASP_CREDENTIALS が JSON として不正です。');
+              process.exit(1);
+            }
+            const cred = store.tokens && store.tokens.default;
+            const legacy = store.token || store.access_token;
+            if (!cred && !legacy) {
+              console.error('clasp の認証情報の形式ではありません。');
+              console.error('clasp login 後に生成される ~/.clasprc.json の中身をそのまま登録してください。');
+              process.exit(1);
+            }
+            if (cred && !cred.refresh_token) {
+              console.error('refresh_token がありません。clasp login をやり直してください。');
+              process.exit(1);
+            }
+            console.log('認証情報の形式: OK');
+          "
+
+      - name: プロジェクト設定を生成
+        env:
+          SCRIPT_ID: ${{ vars.GAS_SCRIPT_ID }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            fs.writeFileSync('.clasp.json', JSON.stringify({
+              scriptId: process.env.SCRIPT_ID,
+              rootDir: 'gas',
+            }, null, 2));
+          "
+
+      - name: Apps Script へ push
+        run: npx --yes @google/clasp@3.3.0 push --force --auth .clasprc.json --project .clasp.json
+
+      - name: 既存デプロイを更新（/exec URL は変わらない）
+        env:
+          DEPLOYMENT_ID: ${{ vars.GAS_DEPLOYMENT_ID }}
+        run: |
+          npx --yes @google/clasp@3.3.0 redeploy "$DEPLOYMENT_ID" \
+            --auth .clasprc.json \
+            --project .clasp.json \
+            --description "GitHub Actions ${{ github.sha }}"
+
+      - name: 認証情報を削除
+        if: always()
+        run: rm -f .clasprc.json .clasp.json

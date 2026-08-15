@@ -24,7 +24,69 @@ cp .env.example .env      # VITE_GAS_API_URL を設定
 npm run dev               # http://localhost:5173
 ```
 
-### GAS のデプロイ
+## GAS の自動デプロイ
+
+`gas/` 配下を変更して `main` に入れると、GitHub Actions が Apps Script へ反映する
+（`.github/workflows/deploy-gas.yml`）。**既存のデプロイを更新するため `/exec` URL は変わらない。**
+
+`gas/appsscript.json` にウェブアプリの設定（実行ユーザー・アクセス範囲）も含めているので、
+「アクセスできるユーザー: 全員」の設定もコード側で管理される。
+
+### 一度だけ必要な準備
+
+**1. Apps Script API を有効にする**
+
+https://script.google.com/home/usersettings を開き、「Google Apps Script API」を **オン** にする。
+
+**2. clasp の認証情報を取り出す**
+
+ターミナルで次を実行する。ローカルに Node を入れたくない場合は
+[Google Cloud Shell](https://shell.cloud.google.com/)（ブラウザだけで使える無料のターミナル）
+で実行してもよい。
+
+```bash
+npx @google/clasp@3.3.0 login --no-localhost
+```
+
+表示された URL をブラウザで開いて許可し、戻ってきたコードを貼り付ける。
+成功したら認証情報を表示する。
+
+```bash
+cat ~/.clasprc.json
+```
+
+**3. スクリプト ID とデプロイ ID を調べる**
+
+| 値 | 調べ方 |
+| --- | --- |
+| スクリプト ID | Apps Script エディタ → ⚙️ プロジェクトの設定 → 「スクリプト ID」 |
+| デプロイ ID | デプロイ → デプロイを管理 → 対象デプロイの「デプロイ ID」 |
+
+**4. GitHub に登録する**
+
+`Settings` → `Secrets and variables` → `Actions`
+
+**Secrets** タブ（`New repository secret`）
+
+| Name | Value |
+| --- | --- |
+| `CLASP_CREDENTIALS` | 手順2の `~/.clasprc.json` の中身をそのまま貼り付け |
+
+**Variables** タブ（`New repository variable`）
+
+| Name | Value |
+| --- | --- |
+| `GAS_SCRIPT_ID` | スクリプト ID |
+| `GAS_DEPLOYMENT_ID` | デプロイ ID |
+
+登録後、`Actions` → `Deploy GAS` → `Run workflow` で手動実行して動作を確認できる。
+
+> `CLASP_CREDENTIALS` は Google アカウントの Apps Script プロジェクトへアクセスできる資格情報。
+> 取り扱いに注意し、不要になったら `npx @google/clasp logout` と GitHub 側の削除を行うこと。
+> このワークフローは `push`（main）と手動実行でのみ動き、Pull Request では動かないため、
+> フォークからの PR にシークレットが渡ることはない。
+
+### GAS の手動デプロイ（自動デプロイを使わない場合）
 
 1. 対象スプレッドシート（`1lbLTY4HvNBeDsqqRmlzNmFSG_jAIR--VKgx0fd9pgTU`）を開き、
    **拡張機能 → Apps Script**
