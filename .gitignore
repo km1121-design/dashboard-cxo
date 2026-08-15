@@ -5,6 +5,9 @@ coverage/
 *.local
 .env
 .env.local
+# clasp の認証情報・プロジェクト設定（CI で生成する。絶対にコミットしない）
+.clasprc.json
+.clasp.json
 .DS_Store
 *.log
 .vite/

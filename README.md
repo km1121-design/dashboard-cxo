@@ -24,7 +24,40 @@ cp .env.example .env      # VITE_GAS_API_URL を設定
 npm run dev               # http://localhost:5173
 ```
 
-### GAS のデプロイ
+## GAS の自動デプロイ
+
+`gas/` 配下を変更して `main` に入れると、GitHub Actions が Apps Script へ反映する
+（`.github/workflows/deploy-gas.yml`）。**既存のデプロイを更新するため `/exec` URL は変わらない。**
+
+`gas/appsscript.json` にウェブアプリの設定（実行ユーザー・アクセス範囲）も含めているので、
+「アクセスできるユーザー: 全員」の設定もコード側で管理される。
+
+### セットアップ
+
+リポジトリのルートで次を実行し、指示に従う（Node.js 18 以上が必要）。
+
+```bash
+bash scripts/setup-gas-deploy.sh
+```
+
+clasp のログインから GitHub への登録までを対話的に行う。
+`gh`（GitHub CLI）が使える場合は Secrets / Variables の登録まで自動で済ませる。
+
+必要な登録内容は以下の 3 つ。手動で登録する場合や、つまずいたときの対処は
+**[docs/gas-deploy-setup.md](docs/gas-deploy-setup.md)** に詳しく書いてある。
+
+| 種別 | Name | 内容 |
+| --- | --- | --- |
+| Secret | `CLASP_CREDENTIALS` | `~/.clasprc.json` の中身（`clasp login` で生成） |
+| Variable | `GAS_SCRIPT_ID` | Apps Script のスクリプト ID |
+| Variable | `GAS_DEPLOYMENT_ID` | 更新対象のデプロイ ID（`@HEAD` ではない方） |
+
+> `CLASP_CREDENTIALS` は Google アカウントの Apps Script プロジェクトへアクセスできる資格情報。
+> 取り扱いに注意し、不要になったら `npx @google/clasp logout` と GitHub 側の削除を行うこと。
+> このワークフローは `push`（main）と手動実行でのみ動き、Pull Request では動かないため、
+> フォークからの PR にシークレットが渡ることはない。
+
+### GAS の手動デプロイ（自動デプロイを使わない場合）
 
 1. 対象スプレッドシート（`1lbLTY4HvNBeDsqqRmlzNmFSG_jAIR--VKgx0fd9pgTU`）を開き、
    **拡張機能 → Apps Script**
