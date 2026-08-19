@@ -226,6 +226,30 @@ gh variable set GAS_SCRIPT_ID     --body "【スクリプトID】"
 gh variable set GAS_DEPLOYMENT_ID --body "【デプロイID】"
 ```
 
+`unknown command "variable" for "gh"` と出る場合は `gh` が古い
+（`gh variable` は 2.36 以降）。REST API 経由なら古い版でも設定できる。
+
+```bash
+SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+
+gh api --method POST "/repos/${SLUG}/actions/variables" \
+  -f name='GAS_SCRIPT_ID' -f value='【スクリプトID】'
+
+gh api --method POST "/repos/${SLUG}/actions/variables" \
+  -f name='GAS_DEPLOYMENT_ID' -f value='【デプロイID】'
+
+# 既に登録済みで 409 になる場合は更新する
+gh api --method PATCH "/repos/${SLUG}/actions/variables/GAS_SCRIPT_ID" \
+  -f name='GAS_SCRIPT_ID' -f value='【スクリプトID】'
+
+# 確認
+gh api "/repos/${SLUG}/actions/variables"
+```
+
+`gh` を新しくするなら https://cli.github.com/ の手順に従う
+（`apt` 版は古いことが多い）。セットアップスクリプトは
+`gh variable` が無い環境では自動的に API 経由に切り替わる。
+
 #### 画面から登録する場合
 
 リポジトリ → **Settings** → **Secrets and variables** → **Actions**
@@ -295,6 +319,7 @@ gas/ を変更して main へ push
 | ワークフローが起動しない | `gas/` 配下を変更していない。手動実行するか `paths` を確認する |
 | `CLASP_CREDENTIALS(シークレット)` が未登録と言われる | Organization Secret の「Repository access」に対象リポジトリが含まれていない。`All repositories` にするか対象を追加する |
 | `--org` で登録が失敗する | 個人（User）アカウントには Organization Secret を設定できない。Organization を作るか、`--org` を外してリポジトリ単位で登録する |
+| `unknown command "variable" for "gh"` | `gh` が 2.36 より古い。上記の `gh api` 経由で登録するか、`gh` を更新する |
 
 ---
 
