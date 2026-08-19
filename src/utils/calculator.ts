@@ -27,6 +27,7 @@ import type {
   EventDeptResult,
   HrDeptResult,
   LogisticsDeptResult,
+  MemberId,
   MemberPayout,
   MonthlySummary,
   PayoutLine,
@@ -727,4 +728,126 @@ export function profitByDept(summary: MonthlySummary): Record<DeptId, number> {
     }),
     {} as Record<DeptId, number>,
   );
+}
+
+/* ============================================================================
+ * 12. メンバー個人ビュー（自分の実績だけを見る画面用）
+ * ========================================================================== */
+
+/** 個人ビューの当月集計 */
+export interface MemberMonthlyResult {
+  /** `YYYY-MM` */
+  month: string;
+  memberId: MemberId;
+  memberName: string;
+  deptId: DeptId;
+  deptLabel: string;
+  /** 本人が担当のレコード（額面） */
+  personalGross: number;
+  /** 同 実質PL売上 */
+  personalEffective: number;
+  /** 本人が担当のレコード */
+  personalRecords: SaleRecord[];
+  /** 所属事業部の額面売上 */
+  deptGross: number;
+  /** 所属事業部の実質PL売上 */
+  deptEffective: number;
+  /** 所属事業部の営業利益（インセンティブ判定の根拠） */
+  deptOperatingProfit: number;
+  /** 所属事業部の月次利益目標 */
+  deptProfitTarget: number;
+  /** 目標達成率（目標が 0 のときは 0） */
+  deptAchievementRate: number;
+  /** 本人の当月支給見立て。対象外のメンバーは null */
+  payout: MemberPayout | null;
+}
+
+/**
+ * 本人と所属事業部の当月分だけを取り出す。
+ *
+ * 全社合計・他事業部の数字は返さない。個人ビューは
+ * 「自分の売上」「自分の事業部の利益（＝インセンティブの根拠）」「自分の支給額」
+ * の 3 つだけを扱う。
+ */
+export function calcMemberMonthly(
+  allRecords: SaleRecord[],
+  monthKey: string,
+  memberId: MemberId,
+  inputs: MonthlyInputs = {},
+): MemberMonthlyResult {
+  const member = MEMBERS.find((m) => m.id === memberId);
+  if (!member) throw new Error(`unknown memberId: ${memberId}`);
+
+  const summary = calcMonthlySummary(allRecords, monthKey, inputs);
+  const deptRow = summary.deptRows.find((r) => r.deptId === member.deptId);
+  const dept = DEPT_BY_ID[member.deptId];
+
+  const monthRecords = filterByMonth(allRecords, monthKey);
+  const personalRecords = filterByMember(monthRecords, member.name);
+
+  return {
+    month: monthKey,
+    memberId: member.id,
+    memberName: member.name,
+    deptId: member.deptId,
+    deptLabel: dept.label,
+    personalGross: sumGross(personalRecords),
+    personalEffective: sumEffective(personalRecords),
+    personalRecords,
+    deptGross: deptRow?.grossSales ?? 0,
+    deptEffective: deptRow?.effectiveSales ?? 0,
+    deptOperatingProfit: deptRow?.operatingProfit ?? 0,
+    deptProfitTarget: dept.monthlyProfitTarget,
+    deptAchievementRate: deptRow?.achievementRate ?? 0,
+    payout: summary.payouts.find((p) => p.memberId === member.id) ?? null,
+  };
+}
+
+/** 個人ビューの通期集計 */
+export interface MemberAnnualResult {
+  memberId: MemberId;
+  memberName: string;
+  fiscalStartMonth: string;
+  /** 月別の内訳（12ヶ月） */
+  months: MemberMonthlyResult[];
+  /** 基本給・固定報酬の年間合計 */
+  annualBase: number;
+  /** インセンティブの年間合計 */
+  annualIncentive: number;
+  /** プール積立の年間合計 */
+  annualBonusPool: number;
+  /** 想定年収 */
+  annualTotal: number;
+  /** 本人担当売上の年間合計（額面） */
+  personalGrossTotal: number;
+}
+
+/** 本人の通期（第5期 12ヶ月）を月別に積み上げる */
+export function calcMemberAnnual(
+  allRecords: SaleRecord[],
+  memberId: MemberId,
+  inputsByMonth: Record<string, MonthlyInputs> = {},
+  fiscalStartMonth: string = FISCAL_START_MONTH,
+): MemberAnnualResult {
+  const months = listFiscalMonths(fiscalStartMonth, 12).map((m) =>
+    calcMemberMonthly(allRecords, m, memberId, inputsByMonth[m] ?? {}),
+  );
+
+  const annualBase = sum(months.map((m) => m.payout?.baseSalary ?? 0));
+  const annualIncentive = sum(
+    months.map((m) => sum((m.payout?.breakdown ?? []).map((l) => l.amount))),
+  );
+  const annualBonusPool = sum(months.map((m) => m.payout?.bonusPoolAccrual ?? 0));
+
+  return {
+    memberId,
+    memberName: months[0]?.memberName ?? '',
+    fiscalStartMonth,
+    months,
+    annualBase,
+    annualIncentive,
+    annualBonusPool,
+    annualTotal: annualBase + annualIncentive + annualBonusPool,
+    personalGrossTotal: sum(months.map((m) => m.personalGross)),
+  };
 }
