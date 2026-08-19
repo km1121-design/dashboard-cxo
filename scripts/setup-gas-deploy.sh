@@ -279,6 +279,44 @@ step 5 "GitHub に登録する"
 # 認証情報は複数プロジェクトで共有できるが、スクリプト ID とデプロイ ID は
 # プロジェクトごとに異なる。そのため --org 指定時も ID 2 つはリポジトリに登録する。
 
+# owner/repo を求める。gh で取れなければ git remote から導出する。
+resolve_repo_slug() {
+  local slug
+  slug="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+  if [ -n "${slug}" ]; then
+    echo "${slug}"
+    return 0
+  fi
+  # git@github.com:owner/repo.git / https://github.com/owner/repo.git の両方に対応
+  git config --get remote.origin.url 2>/dev/null \
+    | sed -E 's#^.*github\.com[:/]##; s#\.git$##'
+}
+
+# リポジトリ変数を設定する。
+# `gh variable` は gh 2.36 以降のサブコマンドなので、
+# 無い場合は REST API で作成（既存なら更新）する。
+set_repo_variable() {
+  local name="$1" value="$2" slug
+
+  if gh variable set "${name}" --body "${value}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  slug="$(resolve_repo_slug)"
+  if [ -z "${slug}" ]; then
+    err "リポジトリを特定できませんでした（${name} の登録に失敗）。"
+    return 1
+  fi
+
+  # 新規作成 → 既に在れば更新
+  if gh api --method POST "/repos/${slug}/actions/variables" \
+       -f name="${name}" -f value="${value}" >/dev/null 2>&1; then
+    return 0
+  fi
+  gh api --method PATCH "/repos/${slug}/actions/variables/${name}" \
+    -f name="${name}" -f value="${value}" >/dev/null
+}
+
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   if [ -n "${ORG}" ]; then
     info "認証情報を Organization「${ORG}」の Secret に登録します。"
@@ -296,8 +334,8 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   fi
 
   # ID はプロジェクト固有なので常にリポジトリ単位
-  gh variable set GAS_SCRIPT_ID --body "${SCRIPT_ID}"
-  gh variable set GAS_DEPLOYMENT_ID --body "${DEPLOYMENT_ID}"
+  set_repo_variable GAS_SCRIPT_ID "${SCRIPT_ID}"
+  set_repo_variable GAS_DEPLOYMENT_ID "${DEPLOYMENT_ID}"
   info "スクリプト ID / デプロイ ID をこのリポジトリに登録しました。"
 
   echo
