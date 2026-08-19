@@ -5,6 +5,9 @@ BARROOTS 店舗日報／LINE転送を 1 つにまとめた Web アプリケー�
 
 仕様の原典は [`docs/claude_code_handoff.md`](docs/claude_code_handoff.md)（開発引き継ぎ指示書）。
 
+> **開発を引き継ぐ場合は [`docs/session-handoff.md`](docs/session-handoff.md) を先に読むこと。**
+> 稼働状況・設定済みの値・未解決の確認事項・環境固有の注意がまとまっている。
+
 ## 技術スタック
 
 | 領域 | 採用 |
