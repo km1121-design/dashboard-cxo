@@ -104,13 +104,48 @@ read -r -p "  オンにしましたか？ [Enter で次へ] " _
 
 step 2 "clasp にログインする"
 
-if [ -f "${CLASPRC}" ] && ${CLASP} show-authorized-user >/dev/null 2>&1; then
-  info "ログイン済みです（${CLASPRC}）"
-  read -r -p "  ログインし直しますか？ [y/N] " relogin
-  [ "${relogin:-N}" = "y" ] && ${CLASP} login --no-localhost
-else
+# アカウントを切り替えるには logout が必須。
+# logout せずに login すると既存の認証情報が残り、別アカウントで許可しても
+# 古いトークンが使われて invalid_grant / invalid_rapt になる。
+do_login() {
   info "ブラウザで URL を開いて許可し、表示されたコードを貼り付けてください。"
   ${CLASP} login --no-localhost
+}
+
+CURRENT_USER=""
+if [ -f "${CLASPRC}" ]; then
+  CURRENT_USER="$(${CLASP} show-authorized-user 2>/dev/null | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+' | head -1 || true)"
+fi
+
+if [ -n "${CURRENT_USER}" ]; then
+  info "現在ログイン中のアカウント: ${CURRENT_USER}"
+  echo
+  info "1) このアカウントで進める"
+  info "2) 別のアカウントに切り替える（logout してログインし直す）"
+  read -r -p "  番号 [1]: " login_choice
+
+  if [ "${login_choice:-1}" = "2" ]; then
+    info "ログアウトします..."
+    ${CLASP} logout || true
+    rm -f "${CLASPRC}"
+    do_login
+  fi
+elif [ -f "${CLASPRC}" ]; then
+  # 認証ファイルはあるが有効なアカウントが取れない（期限切れ・破損など）
+  warn "既存の認証情報が使えません。ログインし直します。"
+  ${CLASP} logout || true
+  rm -f "${CLASPRC}"
+  do_login
+else
+  do_login
+fi
+
+# ログイン後に実際に使われるアカウントを表示して確認する
+EFFECTIVE_USER="$(${CLASP} show-authorized-user 2>/dev/null | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+' | head -1 || true)"
+if [ -n "${EFFECTIVE_USER}" ]; then
+  info "使用するアカウント: ${EFFECTIVE_USER}"
+else
+  warn "アカウント情報を取得できませんでした。このまま続行します。"
 fi
 
 if [ ! -f "${CLASPRC}" ]; then
@@ -159,6 +194,51 @@ step 4 "更新対象のデプロイを選ぶ"
 info "デプロイ一覧を取得しています..."
 DEPLOY_OUT="$(${CLASP} list-deployments "${SCRIPT_ID}" 2>&1 || true)"
 echo "${DEPLOY_OUT}" | sed 's/^/    /'
+
+# API 呼び出し自体が失敗した場合は「デプロイが無い」と混同しないよう先に切り分ける。
+if echo "${DEPLOY_OUT}" | grep -qE '"error"|invalid_grant|invalid_rapt|invalid_client|Unauthorized|not enabled'; then
+  echo
+  err "デプロイ一覧の取得に失敗しました（認証または権限のエラー）。"
+
+  if echo "${DEPLOY_OUT}" | grep -qE 'invalid_rapt|invalid_grant'; then
+    cat <<'EOS'
+
+  原因: 認証情報が古い、または別アカウントのものが残っています。
+        （invalid_rapt は Google が再認証を要求している状態）
+
+  対処: ログアウトしてから、使いたいアカウントでログインし直してください。
+
+      npx @google/clasp@3.3.0 logout
+      npx @google/clasp@3.3.0 login --no-localhost
+
+  そのあとこのスクリプトを再実行し、[2] で「1) このアカウントで進める」を選びます。
+  ブラウザに複数の Google アカウントでログインしている場合は、
+  許可画面でアカウントを取り違えないよう注意してください
+  （シークレットウィンドウで開くと確実です）。
+
+EOS
+  elif echo "${DEPLOY_OUT}" | grep -q 'not enabled'; then
+    cat <<'EOS'
+
+  原因: Apps Script API が有効になっていません。
+
+  対処: 次のページで「Google Apps Script API」をオンにしてください。
+        ※ ログインしているアカウントごとに設定が必要です。
+           いま clasp で使っているアカウントで開くこと。
+
+      https://script.google.com/home/usersettings
+
+EOS
+  else
+    cat <<'EOS'
+
+  スクリプト ID が誤っている、またはそのアカウントに閲覧権限が無い可能性があります。
+  Apps Script エディタ → ⚙️ プロジェクトの設定 → 「スクリプト ID」を確認してください。
+
+EOS
+  fi
+  exit 1
+fi
 
 # "- <id> @<version>" 形式の行から ID を拾う。@HEAD は /dev 用なので除外する。
 mapfile -t DEPLOY_IDS < <(echo "${DEPLOY_OUT}" \

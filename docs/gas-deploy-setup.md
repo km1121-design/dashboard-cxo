@@ -285,13 +285,53 @@ gas/ を変更して main へ push
 | 症状 | 原因と対処 |
 | --- | --- |
 | `User has not enabled the Apps Script API` | 手順1が未実施。https://script.google.com/home/usersettings でオンにする |
-| `invalid_client` / `invalid_grant` | 認証情報が古い・不正。`clasp login` をやり直して Secret を登録し直す |
+| `invalid_client` / `invalid_grant` | 認証情報が古い・不正。**`clasp logout` してから** `clasp login` をやり直す（下記「アカウントを切り替えたい」参照） |
+| `invalid_rapt` / `reauth related error` | Google が再認証を要求している。`clasp logout` → `clasp login --no-localhost` でやり直す |
 | `CLASP_CREDENTIALS が JSON として不正です` | 貼り付け時に一部が欠けている。`cat ~/.clasprc.json` の**全文**を貼る |
 | デプロイしても `/exec` の内容が変わらない | `GAS_DEPLOYMENT_ID` に `@HEAD` のデプロイを指定している。バージョン付きの方に変更する |
 | `Requested entity was not found` | `GAS_SCRIPT_ID` か `GAS_DEPLOYMENT_ID` の値が誤っている |
+| `Parent ID not set, unable to open document`（`open-container` 実行時） | そのスクリプトはスタンドアロン（スプレッドシートに紐づいていない）。`Code.gs` は両対応なのでそのまま使えるが、対象スプレッドシートは `DEFAULT_SPREADSHEET_ID`（またはスクリプトプロパティ `SPREADSHEET_ID`）で決まる |
+| `No item with the given ID could be found` | `SPREADSHEET_ID` が誤っている、またはそのアカウントに対象スプレッドシートの権限が無い |
 | ワークフローが起動しない | `gas/` 配下を変更していない。手動実行するか `paths` を確認する |
 | `CLASP_CREDENTIALS(シークレット)` が未登録と言われる | Organization Secret の「Repository access」に対象リポジトリが含まれていない。`All repositories` にするか対象を追加する |
 | `--org` で登録が失敗する | 個人（User）アカウントには Organization Secret を設定できない。Organization を作るか、`--org` を外してリポジトリ単位で登録する |
+
+---
+
+## アカウントを切り替えたい（個人用 → 仕事用など）
+
+**`clasp login` だけではアカウントは切り替わらない。** 既存の認証情報が残るため、
+別アカウントで許可しても古いトークンが使われ、`invalid_grant` / `invalid_rapt` になる。
+必ず先に `logout` する。
+
+```bash
+npx @google/clasp@3.3.0 logout
+npx @google/clasp@3.3.0 login --no-localhost
+```
+
+セットアップスクリプトは現在のアカウントを表示し、切り替えるかを選べる。
+
+```
+[2] clasp にログインする
+  現在ログイン中のアカウント: personal@gmail.com
+
+  1) このアカウントで進める
+  2) 別のアカウントに切り替える（logout してログインし直す）
+  番号 [1]:
+```
+
+### 切り替え時の注意
+
+- **Apps Script API の有効化はアカウントごとに必要。**
+  切り替えたら、新しいアカウントで
+  https://script.google.com/home/usersettings を開いてオンにする。
+- **ブラウザで複数の Google アカウントにログインしていると取り違えやすい。**
+  許可画面でアカウントを選び間違えないよう、**シークレットウィンドウで開くと確実**。
+- 現在どのアカウントで認証されているかは次で確認できる。
+
+  ```bash
+  npx @google/clasp@3.3.0 show-authorized-user
+  ```
 
 ---
 
