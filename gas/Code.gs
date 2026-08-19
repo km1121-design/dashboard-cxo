@@ -3,10 +3,17 @@
  *
  * 引き継ぎ指示書 4章のコードをそのまま配置している。
  *
+ * ■ 対応するスクリプトの種類
+ *  - コンテナバインド（スプレッドシートの「拡張機能 → Apps Script」で作ったもの）
+ *  - スタンドアロン（単独で作った Apps Script プロジェクト）
+ *  どちらでも動く。スタンドアロンの場合は下記 DEFAULT_SPREADSHEET_ID の
+ *  スプレッドシートを ID で開く（スクリプトプロパティ SPREADSHEET_ID で変更可）。
+ *
  * ■ デプロイ手順
  *  1. 対象スプレッドシート
  *     https://docs.google.com/spreadsheets/d/1lbLTY4HvNBeDsqqRmlzNmFSG_jAIR--VKgx0fd9pgTU/edit
  *     を開き、拡張機能 → Apps Script を選ぶ
+ *     （スタンドアロンで運用する場合はこの手順は不要）
  *  2. このファイルの内容を Code.gs に貼り付けて保存
  *  3. デプロイ → 新しいデプロイ → 種類「ウェブアプリ」
  *       次のユーザーとして実行 : 自分
@@ -29,6 +36,37 @@
  */
 const SHEET_NAME_SALES = 't_sales';
 const AUTH_TOKEN_PROPERTY = 'AUTH_TOKEN';
+const SPREADSHEET_ID_PROPERTY = 'SPREADSHEET_ID';
+
+/**
+ * 対象スプレッドシートの既定 ID（引き継ぎ指示書 1.2）。
+ * スクリプトプロパティ SPREADSHEET_ID を設定すればそちらが優先される。
+ */
+const DEFAULT_SPREADSHEET_ID = '1lbLTY4HvNBeDsqqRmlzNmFSG_jAIR--VKgx0fd9pgTU';
+
+/**
+ * 操作対象のスプレッドシートを取得する。
+ *
+ * スプレッドシートに紐づいた（コンテナバインドの）スクリプトなら
+ * getActiveSpreadsheet() で取得できるが、スタンドアロンのスクリプトでは
+ * null が返るため、その場合は ID で開く。
+ * これによりバインド・スタンドアロンのどちらでも動作する。
+ */
+function getTargetSpreadsheet() {
+  const active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
+
+  const id =
+    PropertiesService.getScriptProperties().getProperty(SPREADSHEET_ID_PROPERTY) ||
+    DEFAULT_SPREADSHEET_ID;
+
+  if (!id) {
+    throw new Error(
+      'スプレッドシートを特定できません。スクリプトプロパティ SPREADSHEET_ID を設定してください。'
+    );
+  }
+  return SpreadsheetApp.openById(id);
+}
 
 /**
  * スクリプトプロパティに設定されたトークンを返す。未設定なら空文字。
@@ -91,7 +129,7 @@ function doGet(e) {
       return unauthorizedResponse();
     }
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss = getTargetSpreadsheet();
     const salesSheet = getOrCreateSalesSheet(ss);
     const salesData = getSheetDataAsJson(salesSheet);
 
@@ -112,7 +150,7 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss = getTargetSpreadsheet();
     const salesSheet = getOrCreateSalesSheet(ss);
 
     if (!e || !e.postData || !e.postData.contents) {

@@ -290,6 +290,8 @@ gas/ を変更して main へ push
 | `CLASP_CREDENTIALS が JSON として不正です` | 貼り付け時に一部が欠けている。`cat ~/.clasprc.json` の**全文**を貼る |
 | デプロイしても `/exec` の内容が変わらない | `GAS_DEPLOYMENT_ID` に `@HEAD` のデプロイを指定している。バージョン付きの方に変更する |
 | `Requested entity was not found` | `GAS_SCRIPT_ID` か `GAS_DEPLOYMENT_ID` の値が誤っている |
+| `Parent ID not set, unable to open document`（`open-container` 実行時） | そのスクリプトはスタンドアロン（スプレッドシートに紐づいていない）。`Code.gs` は両対応なのでそのまま使えるが、対象スプレッドシートは `DEFAULT_SPREADSHEET_ID`（またはスクリプトプロパティ `SPREADSHEET_ID`）で決まる |
+| `No item with the given ID could be found` | `SPREADSHEET_ID` が誤っている、またはそのアカウントに対象スプレッドシートの権限が無い |
 | ワークフローが起動しない | `gas/` 配下を変更していない。手動実行するか `paths` を確認する |
 | `CLASP_CREDENTIALS(シークレット)` が未登録と言われる | Organization Secret の「Repository access」に対象リポジトリが含まれていない。`All repositories` にするか対象を追加する |
 | `--org` で登録が失敗する | 個人（User）アカウントには Organization Secret を設定できない。Organization を作るか、`--org` を外してリポジトリ単位で登録する |
