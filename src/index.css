@@ -49,3 +49,27 @@
     @apply btn bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800;
   }
 }
+
+/* 支給明細をそのまま印刷・PDF 保存できるようにする。
+   操作系（ボタン・ナビ・入力パネル）は print:hidden で個別に落としている。 */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  .card {
+    border-color: #cbd5e1;
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  /* 表とカードがページ間で割れないようにする */
+  table,
+  section {
+    break-inside: avoid;
+  }
+}

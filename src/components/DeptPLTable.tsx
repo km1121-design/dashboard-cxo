@@ -22,7 +22,59 @@ export function DeptPLTable({ rows }: { rows: DeptPlRow[] }) {
         </p>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* スマホでは横スクロールさせず、事業部ごとのカードで読ませる */}
+      <ul className="divide-y divide-slate-100 sm:hidden">
+        {rows.map((row) => (
+          <li key={row.deptId} className="px-4 py-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-sm font-medium text-slate-700">{row.deptLabel}</span>
+              <span
+                className={`tabular text-sm font-bold ${
+                  row.operatingProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                }`}
+              >
+                {formatYen(row.operatingProfit)}
+              </span>
+            </div>
+            <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-slate-500">
+              <div className="flex justify-between">
+                <dt>額面売上</dt>
+                <dd className="tabular text-slate-600">{formatYen(row.grossSales)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt>実質PL売上</dt>
+                <dd className="tabular text-slate-600">{formatYen(row.effectiveSales)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt>経費</dt>
+                <dd className="tabular text-slate-600">{formatYen(row.expense)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt>人件費</dt>
+                <dd className="tabular text-slate-600">{formatYen(row.laborCost)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt>目標達成率</dt>
+                <dd className="tabular text-slate-600">
+                  {row.achievementRate > 0 ? formatPercent(row.achievementRate) : '—'}
+                </dd>
+              </div>
+            </dl>
+          </li>
+        ))}
+        <li className="flex items-baseline justify-between gap-2 bg-slate-50 px-4 py-3">
+          <span className="text-sm font-bold text-slate-700">全社合計 営業利益</span>
+          <span
+            className={`tabular text-sm font-bold ${
+              total.operatingProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'
+            }`}
+          >
+            {formatYen(total.operatingProfit)}
+          </span>
+        </li>
+      </ul>
+
+      <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">

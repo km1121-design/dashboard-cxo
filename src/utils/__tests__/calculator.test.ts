@@ -19,6 +19,8 @@ import {
   calcEventPayoutIncentive,
   calcHrDept,
   calcLogisticsDept,
+  calcMemberAnnual,
+  calcMemberMonthly,
   calcMonthlySummary,
   calcPlacementAllowance,
   calcTieredPool,
@@ -560,5 +562,77 @@ describe('日別進捗（指示書 3章）', () => {
     expect(progress.proratedTarget).toBe(0);
     expect(progress.proratedAchievementRate).toBe(0);
     expect(Number.isFinite(progress.dailyRequired)).toBe(true);
+  });
+});
+
+/* ============================================================================
+ * 個人ビュー（本人＋所属事業部だけを取り出す）
+ * ========================================================================== */
+
+describe('calcMemberMonthly', () => {
+  const records = [
+    sale({ id: 'A', date: '2026-08-05', category: BAR_CATEGORY, gross: 1_500_000 }),
+    // 他事業部・他メンバーの行は個人集計に混ぜない
+    sale({
+      id: 'B',
+      date: '2026-08-06',
+      dept: '人材',
+      category: '人材紹介(広告)',
+      member: '中原 聖人',
+      gross: 800_000,
+    }),
+  ];
+
+  it('本人の担当売上と所属事業部の営業利益だけを返す', () => {
+    const result = calcMemberMonthly(records, '2026-08', 'M001');
+
+    expect(result.memberName).toBe('入舩 雄志');
+    expect(result.deptLabel).toBe('イベント営業');
+    expect(result.personalGross).toBe(1_500_000);
+    expect(result.personalRecords).toHaveLength(1);
+
+    // 営業利益 = 1,500,000 − 経費0 − 基本給320,000 − 保守費20,000
+    expect(result.deptOperatingProfit).toBe(1_160_000);
+    expect(result.deptProfitTarget).toBe(1_000_000);
+    expect(result.deptAchievementRate).toBeCloseTo(1.16, 6);
+  });
+
+  it('本人の支給見立てを付ける（営業利益100万超なのでBAR10%が乗る）', () => {
+    const result = calcMemberMonthly(records, '2026-08', 'M001');
+
+    expect(result.payout?.memberId).toBe('M001');
+    expect(result.payout?.baseSalary).toBe(RULES.eventBaseSalary);
+    expect(result.payout?.breakdown[0].amount).toBe(150_000);
+  });
+
+  it('他メンバーを指定しても他人の行は混ざらない', () => {
+    const result = calcMemberMonthly(records, '2026-08', 'M002');
+
+    expect(result.memberName).toBe('中原 聖人');
+    expect(result.personalGross).toBe(800_000);
+    expect(result.deptLabel).toBe('人材');
+  });
+
+  it('存在しないメンバーIDは例外にする', () => {
+    // @ts-expect-error 未定義のメンバーIDを渡した場合の防御
+    expect(() => calcMemberMonthly(records, '2026-08', 'M999')).toThrow();
+  });
+});
+
+describe('calcMemberAnnual', () => {
+  const records = [sale({ date: '2025-09-10', category: BAR_CATEGORY, gross: 2_000_000 })];
+
+  it('期首から12ヶ月分を月別に積み上げる', () => {
+    const annual = calcMemberAnnual(records, 'M001', {}, '2025-08');
+
+    expect(annual.months).toHaveLength(12);
+    expect(annual.months[0].month).toBe('2025-08');
+    expect(annual.months[11].month).toBe('2026-07');
+    expect(annual.personalGrossTotal).toBe(2_000_000);
+    // 基本給は 12 ヶ月分
+    expect(annual.annualBase).toBe(RULES.eventBaseSalary * 12);
+    expect(annual.annualTotal).toBe(
+      annual.annualBase + annual.annualIncentive + annual.annualBonusPool,
+    );
   });
 });

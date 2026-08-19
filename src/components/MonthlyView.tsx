@@ -1,11 +1,14 @@
-import { Banknote, PiggyBank, SlidersHorizontal, TrendingUp } from 'lucide-react';
+import { Banknote, Download, PiggyBank, Printer, SlidersHorizontal, TrendingUp } from 'lucide-react';
+import { MixDonut } from '@/components/charts/MixDonut';
 import { DeptPLTable } from '@/components/DeptPLTable';
 import { MemberPayoutCard } from '@/components/MemberPayoutCard';
 import { NumberField } from '@/components/NumberField';
 import { StatCard } from '@/components/StatCard';
 import type { SaleRecord } from '@/types';
 import { calcMonthlySummary, type MonthlyInputs } from '@/utils/calculator';
+import { buildDeptPlCsv, buildPayoutCsv, downloadCsv } from '@/utils/csv';
 import { formatYen } from '@/utils/format';
+import { buildDeptMix } from '@/utils/series';
 
 interface Props {
   records: SaleRecord[];
@@ -30,7 +33,7 @@ function InputPanel({ inputs, onInputsChange }: Pick<Props, 'inputs' | 'onInputs
   };
 
   return (
-    <div className="card p-4">
+    <div className="card p-4 print:hidden">
       <h2 className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-800">
         <SlidersHorizontal size={15} className="text-slate-400" />
         月次入力（売上ログ外の項目）
@@ -39,7 +42,7 @@ function InputPanel({ inputs, onInputsChange }: Pick<Props, 'inputs' | 'onInputs
         経費・決定件数はスプレッドシートに載らないため、ここで入力する（ブラウザに月別保存）。
       </p>
 
-      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <NumberField
           label="イベント営業 経費"
           value={expenses.event?.directExpense ?? 0}
@@ -93,17 +96,42 @@ export function MonthlyView({ records, month, onMonthChange, inputs, onInputsCha
 
   return (
     <div className="space-y-4">
-      <div className="card flex flex-wrap items-center gap-3 px-4 py-3">
-        <label className="text-sm font-medium text-slate-600">対象月</label>
+      <div className="card flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4">
+        <label htmlFor="monthly-month" className="text-sm font-medium text-slate-600">
+          対象月
+        </label>
         <input
+          id="monthly-month"
           type="month"
           value={month}
           onChange={(e) => onMonthChange(e.target.value)}
-          className="input max-w-[180px]"
+          className="input min-h-[40px] max-w-[160px]"
         />
+        <div className="ml-auto flex flex-wrap gap-2 print:hidden">
+          <button
+            type="button"
+            onClick={() => downloadCsv(`payout_${month}.csv`, buildPayoutCsv(summary))}
+            className="btn-ghost"
+          >
+            <Download size={15} />
+            支給<span className="hidden sm:inline">明細</span>CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => downloadCsv(`dept_pl_${month}.csv`, buildDeptPlCsv(summary))}
+            className="btn-ghost"
+          >
+            <Download size={15} />
+            <span className="hidden sm:inline">事業部</span>PL CSV
+          </button>
+          <button type="button" onClick={() => window.print()} className="btn-ghost">
+            <Printer size={15} />
+            印刷
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="当月 額面売上"
           value={formatYen(summary.grossSales)}
@@ -142,6 +170,13 @@ export function MonthlyView({ records, month, onMonthChange, inputs, onInputsCha
       </div>
 
       <DeptPLTable rows={summary.deptRows} />
+
+      <MixDonut
+        title="事業部別 売上構成（当月）"
+        subtitle="額面売上の構成比。金額と比率は凡例と表で読める。"
+        segments={buildDeptMix(summary.deptRows)}
+        totalLabel="当月合計"
+      />
 
       <InputPanel inputs={inputs} onInputsChange={onInputsChange} />
     </div>

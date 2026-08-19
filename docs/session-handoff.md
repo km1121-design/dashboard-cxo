@@ -3,7 +3,7 @@
 Claude Code の新規セッションで作業を再開するための現状まとめ。
 **このファイルと `README.md` を読めば、過去の会話を辿らずに続けられる。**
 
-最終更新: 2026-08-19 / 対象コミット: `82a8c84`
+最終更新: 2026-08-19 / 対象コミット: `2e6ed9c` ＋ 本セッションの変更
 
 ---
 
@@ -22,7 +22,8 @@ Claude Code の新規セッションで作業を再開するための現状ま�
 | トークン認証 | 実測で保護を確認（未トークン・誤トークンとも拒否） |
 | `gas/` 変更 → Apps Script 自動デプロイ | 動作確認済み |
 | `src/` 変更 → GitHub Pages 自動公開 | 動作確認済み |
-| CI（型チェック・テスト・ビルド） | 通過（テスト 112 件） |
+| CI（型チェック・テスト・ビルド） | 通過（テスト 162 件） |
+| 閲覧者の切り分け（個人ビュー） | 実装済み。**表示の切り分けのみで権限制御ではない**（下記 4-6） |
 
 ---
 
@@ -34,15 +35,22 @@ src/
 ├── lib/
 │   ├── gasApi.ts           GAS Web API クライアント（環境非依存・テスト可能）
 │   ├── env.ts              import.meta.env を閉じ込めた層
-│   └── credentials.ts      トークン・URL の localStorage 保管
+│   ├── credentials.ts      トークン・URL の localStorage 保管
+│   ├── viewer.ts           閲覧者（全社／個人）の解決
+│   └── reportDraft.ts      日報の下書き保存
 ├── utils/
-│   ├── calculator.ts       計算エンジン（指示書 5章・6章）
+│   ├── calculator.ts       計算エンジン（指示書 5章・6章 ＋ 個人集計）
+│   ├── series.ts           グラフ用の系列組み立て（純関数）
+│   ├── csv.ts              支給明細・年収シミュレーションの CSV
 │   ├── lineFormat.ts       LINE 転送フォーマット生成（指示書 6章）
 │   ├── date.ts             営業日・月キー
-│   └── format.ts           金額・パーセント表示
+│   └── format.ts           金額・パーセント・軸ラベル表示
 ├── constants/master.ts     メンバー／事業部マスタ・報酬ルール定数
 ├── hooks/                  useSalesData（同期）/ useMonthlyInputs（月次手入力）
-├── components/             3 ビュー ＋ 日報モーダル ＋ 接続設定ダイアログ
+├── components/
+│   ├── charts/             インライン SVG のグラフ（依存追加なし）
+│   ├── PersonalView.tsx    個人実績ビュー（入舩・中原）
+│   └── …                   全社3ビュー ＋ 日報モーダル ＋ 接続設定ダイアログ
 └── __tests__/gasCode.test.ts   gas/Code.gs を GAS API スタブ上で検証
 
 gas/
@@ -104,9 +112,20 @@ docs/gas-deploy-setup.md    その手順書（他プロジェクトへ流用可�
 | 3 | イベント営業の半年プール率 | 一律 10%（`profitTarget` を渡した場合のみ超過分 20%） | プール積立額 |
 | 4 | 事業部の月次利益目標 | 暫定 **100万円**（`DEPTS[].monthlyProfitTarget`） | **チームプール 3%/5% 判定** |
 | 5 | 残営業日の数え方 | 日曜を定休日として除外 | 1日必達の算出 |
+| 6 | 個人ビューの権限 | 表示の切り分けのみ（トークンは全員共通） | **本人以外も全社を見られる** |
+| 7 | 月次入力の共有 | 端末ごとに `localStorage` 保存 | 端末間で経費の値がずれる |
+| 8 | 通期の範囲 | `FISCAL_START_MONTH = '2025-08'` の 12ヶ月（〜2026-07） | 2026-08 以降は通期集計に入らない |
 
 **2 と 4 は支給額に直結する。** 初回の月次締めで実際の数字と照合してほしい。
 変更は `src/constants/master.ts` と `src/utils/calculator.ts` の該当関数のみで済む。
+
+**6・7・8 は今回の実装で残した割り切り。** 詳細と対処案は README の「仕様解釈のメモ」6〜7 と
+「閲覧者の切り分け」節にある。要点だけ:
+
+- **6**: 本当に権限を分けるなら GAS 側でメンバーごとのトークンを持ち、返す行を絞る必要がある。
+  今の実装は `?viewer=M001&lock=1` の配布リンクと `localStorage` による表示の切り分け。
+- **7**: 経費を共有したいなら `t_monthly_inputs` 相当のシートを足して GAS 経由で読み書きする。
+- **8**: 第6期に入るときは `FISCAL_START_MONTH` を更新する。
 
 ---
 
@@ -118,6 +137,11 @@ npm run dev          # http://localhost:5173
 npm test             # Jest 112 件
 npm run typecheck
 npm run build
+
+# 閲覧者を切り替えて確認する（開発時）
+#   http://localhost:5173/?viewer=M001&lock=1   入舩（個人ビュー・固定）
+#   http://localhost:5173/?viewer=M002&lock=1   中原（個人ビュー・固定）
+#   http://localhost:5173/?viewer=all           全社ダッシュボードに戻す
 
 gh workflow run "Deploy GAS"              # Apps Script へ手動デプロイ
 gh workflow run "Deploy to GitHub Pages"  # サイトを手動再公開
@@ -161,6 +185,8 @@ gh run watch
 | #4 | 認証情報を Organization Secret で共有する手順 |
 | #5 | アカウント切替の修正 ＆ スタンドアロン Apps Script 対応 |
 | #6 | 古い `gh` でもリポジトリ変数を登録できるように |
+| #7 | セッション引き継ぎメモを追加 |
+| #8 | 個人ビュー切り分け・グラフ・日報改善・CSV／印刷・モバイル対応 |
 
 > リポジトリ所有者は **User アカウント**（Organization ではない）。
 > そのため Organization Secret は現状使えない。手順は #4 で用意済み。

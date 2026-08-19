@@ -1,23 +1,34 @@
-import { CalendarRange, PiggyBank, TrendingUp, Users } from 'lucide-react';
+import { CalendarRange, Download, PiggyBank, TrendingUp, Users } from 'lucide-react';
+import { MixDonut } from '@/components/charts/MixDonut';
+import { TrendChart } from '@/components/charts/TrendChart';
 import { StatCard } from '@/components/StatCard';
 import { FISCAL_START_MONTH } from '@/constants/master';
 import type { SaleRecord } from '@/types';
 import { calcTotalSummary, type MonthlyInputs } from '@/utils/calculator';
+import { buildAnnualCsv, downloadCsv } from '@/utils/csv';
 import { formatManYen, formatYen } from '@/utils/format';
+import { buildCategoryMix, buildMonthlyTrend, trimToElapsedMonths } from '@/utils/series';
 
 interface Props {
   records: SaleRecord[];
   inputsByMonth: Record<string, MonthlyInputs>;
   fiscalStartMonth?: string;
+  /** 当月。未到来の月は推移グラフから落とす */
+  currentMonth: string;
 }
 
-export function TotalView({ records, inputsByMonth, fiscalStartMonth = FISCAL_START_MONTH }: Props) {
+export function TotalView({
+  records,
+  inputsByMonth,
+  fiscalStartMonth = FISCAL_START_MONTH,
+  currentMonth,
+}: Props) {
   const total = calcTotalSummary(records, inputsByMonth, fiscalStartMonth);
-  const maxProfit = Math.max(...total.months.map((m) => Math.abs(m.operatingProfit)), 1);
+  const trend = trimToElapsedMonths(buildMonthlyTrend(total.months), currentMonth);
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="通期 額面売上"
           value={formatYen(total.grossSales)}
@@ -46,64 +57,39 @@ export function TotalView({ records, inputsByMonth, fiscalStartMonth = FISCAL_ST
         />
       </div>
 
-      <div className="card overflow-hidden">
-        <div className="border-b border-slate-200 px-4 py-3">
-          <h2 className="text-sm font-bold text-slate-800">第5期 月次推移</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
-                <th className="px-4 py-2.5 text-left font-medium">月</th>
-                <th className="px-4 py-2.5 text-right font-medium">額面売上</th>
-                <th className="px-4 py-2.5 text-right font-medium">実質PL売上</th>
-                <th className="px-4 py-2.5 text-right font-medium">営業利益</th>
-                <th className="px-4 py-2.5 text-left font-medium">推移</th>
-              </tr>
-            </thead>
-            <tbody>
-              {total.months.map((m) => (
-                <tr key={m.month} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-2 font-medium text-slate-700">{m.month}</td>
-                  <td className="tabular px-4 py-2 text-right text-slate-600">
-                    {formatYen(m.grossSales)}
-                  </td>
-                  <td className="tabular px-4 py-2 text-right text-slate-600">
-                    {formatYen(m.effectiveSales)}
-                  </td>
-                  <td
-                    className={`tabular px-4 py-2 text-right font-medium ${
-                      m.operatingProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'
-                    }`}
-                  >
-                    {formatYen(m.operatingProfit)}
-                  </td>
-                  <td className="px-4 py-2">
-                    <div className="h-2 w-full min-w-[80px] overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className={`h-full rounded-full ${
-                          m.operatingProfit >= 0 ? 'bg-emerald-400' : 'bg-rose-400'
-                        }`}
-                        style={{ width: `${(Math.abs(m.operatingProfit) / maxProfit) * 100}%` }}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <TrendChart
+        points={trend}
+        title="第5期 月次推移"
+        subtitle="当月までの実績。棒が額面売上、折れ線が全社営業利益。"
+      />
+
+      <MixDonut
+        title="通期 カテゴリ別売上構成"
+        subtitle="上位5カテゴリとその他。金額と構成比は凡例と表で読める。"
+        segments={buildCategoryMix(records)}
+        totalLabel="通期合計"
+      />
 
       <div>
-        <h2 className="mb-2 inline-flex items-center gap-1.5 text-sm font-bold text-slate-800">
-          <Users size={15} className="text-slate-400" />
-          年収シミュレーション
-        </h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-800">
+            <Users size={15} className="text-slate-400" />
+            年収シミュレーション
+          </h2>
+          <button
+            type="button"
+            onClick={() => downloadCsv(`annual_${total.fiscalStartMonth}.csv`, buildAnnualCsv(total))}
+            className="btn-ghost !px-2.5 !text-xs print:hidden"
+          >
+            <Download size={14} />
+            CSV
+          </button>
+        </div>
+
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
           {total.annualByMember.map((m) => (
             <div key={m.memberId} className="card p-4">
-              <div className="flex items-baseline justify-between">
+              <div className="flex items-baseline justify-between gap-2">
                 <h3 className="text-sm font-bold text-slate-800">{m.memberName}</h3>
                 <span className="tabular text-xl font-bold text-indigo-700">
                   {formatManYen(m.annualTotal)}

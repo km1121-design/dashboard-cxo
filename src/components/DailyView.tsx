@@ -1,8 +1,11 @@
 import { CalendarDays, Target, TrendingUp, Zap } from 'lucide-react';
+import { DailySalesChart } from '@/components/charts/DailySalesChart';
 import { StatCard } from '@/components/StatCard';
 import type { SaleRecord } from '@/types';
 import { calcDailyProgress } from '@/utils/calculator';
+import { toMonthKey } from '@/utils/date';
 import { formatPercent, formatYen } from '@/utils/format';
+import { buildDailySeries } from '@/utils/series';
 
 interface Props {
   records: SaleRecord[];
@@ -14,26 +17,31 @@ interface Props {
 export function DailyView({ records, date, onDateChange, monthlySalesTarget }: Props) {
   const progress = calcDailyProgress(records, date, { monthlySalesTarget });
   const achieved = progress.proratedAchievementRate >= 1;
+  const dailyPoints = buildDailySeries(records, toMonthKey(date));
 
   return (
     <div className="space-y-4">
-      <div className="card flex flex-wrap items-center gap-3 px-4 py-3">
-        <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-600">
+      <div className="card flex flex-wrap items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4">
+        <label
+          htmlFor="daily-date"
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-600"
+        >
           <CalendarDays size={16} className="text-slate-400" />
           対象日
         </label>
         <input
+          id="daily-date"
           type="date"
           value={date}
           onChange={(e) => onDateChange(e.target.value)}
-          className="input max-w-[180px]"
+          className="input min-h-[40px] max-w-[170px]"
         />
         <span className="text-xs text-slate-400">
           当日ログ {progress.records.length} 件 ／ 残営業日 {progress.remainingBusinessDays} 日
         </span>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="当日売上（額面）"
           value={formatYen(progress.dailyGross)}
@@ -64,6 +72,12 @@ export function DailyView({ records, date, onDateChange, monthlySalesTarget }: P
         />
       </div>
 
+      <DailySalesChart
+        points={dailyPoints}
+        proratedTarget={progress.proratedTarget}
+        highlightDate={date}
+      />
+
       <div className="card overflow-hidden">
         <div className="border-b border-slate-200 px-4 py-3">
           <h2 className="text-sm font-bold text-slate-800">当日の案件ログ</h2>
@@ -74,7 +88,25 @@ export function DailyView({ records, date, onDateChange, monthlySalesTarget }: P
             この日の登録データはありません。
           </p>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <ul className="divide-y divide-slate-100 sm:hidden">
+              {progress.records.map((r) => (
+                <li key={r.id} className="px-4 py-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-sm font-medium text-slate-700">{r.member}</span>
+                    <span className="tabular shrink-0 text-sm font-bold text-slate-800">
+                      {formatYen(r.gross)}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {r.dept} ／ {r.category} ／ 計上率 {formatPercent(r.plRate, 0)}
+                  </p>
+                  {r.comment && <p className="mt-1 text-xs text-slate-500">{r.comment}</p>}
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[680px] text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
@@ -103,7 +135,8 @@ export function DailyView({ records, date, onDateChange, monthlySalesTarget }: P
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </div>
