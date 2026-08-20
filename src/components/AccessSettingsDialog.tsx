@@ -6,7 +6,7 @@
  * 読まれてもスプレッドシートへアクセスされないようにする。
  */
 import { useEffect, useId, useState } from 'react';
-import { Check, Copy, Eye, EyeOff, KeyRound, Trash2, Users, X } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, KeyRound, LogOut, Trash2, UserRound, Users, X } from 'lucide-react';
 import {
   clearCredentials,
   getStoredToken,
@@ -33,6 +33,11 @@ interface Props {
   /** 現在の閲覧者 */
   viewer: Viewer;
   onViewerChange: (id: ViewerId) => void;
+  /**
+   * Google アカウント認証を使っている場合のサインイン情報。
+   * 使っていない構成では null。
+   */
+  googleAuth: { email: string; onSignOut: () => void } | null;
 }
 
 /** メンバーごとの配布リンクを作ってコピーするパネル */
@@ -92,6 +97,7 @@ export function AccessSettingsDialog({
   onSaved,
   viewer,
   onViewerChange,
+  googleAuth,
 }: Props) {
   const [token, setToken] = useState('');
   const [url, setUrl] = useState('');
@@ -130,7 +136,7 @@ export function AccessSettingsDialog({
         <header className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
           <h2 className="inline-flex items-center gap-2 text-base font-bold text-slate-800">
             <KeyRound size={17} className="text-indigo-600" />
-            接続設定
+            {googleAuth ? '表示設定' : '接続設定'}
           </h2>
           {dismissable && (
             <button
@@ -145,13 +151,39 @@ export function AccessSettingsDialog({
         </header>
 
         <div className="space-y-4 p-5">
-          <p className="rounded-lg bg-indigo-50 px-3 py-2.5 text-xs leading-relaxed text-indigo-800">
-            アクセストークンを入力すると、このブラウザにだけ保存されます。
-            公開ページの中身にトークンは含まれないため、
-            トークンを知っている人だけがデータを閲覧・登録できます。
-          </p>
+          {googleAuth ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <p className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                <UserRound size={14} className="text-slate-400" />
+                サインイン中のアカウント
+              </p>
+              <p className="mt-1 break-all text-sm font-medium text-slate-800">
+                {googleAuth.email || '（メールアドレスを取得できませんでした）'}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                表示される範囲はこのアカウントに紐づいてサーバー側で決まります。
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  googleAuth.onSignOut();
+                  onClose();
+                }}
+                className="btn-ghost mt-2.5 !px-2.5 !py-1.5 !text-xs"
+              >
+                <LogOut size={13} />
+                サインアウト
+              </button>
+            </div>
+          ) : (
+            <p className="rounded-lg bg-indigo-50 px-3 py-2.5 text-xs leading-relaxed text-indigo-800">
+              アクセストークンを入力すると、このブラウザにだけ保存されます。
+              公開ページの中身にトークンは含まれないため、
+              トークンを知っている人だけがデータを閲覧・登録できます。
+            </p>
+          )}
 
-          <div>
+          <div className={googleAuth ? 'hidden' : undefined}>
             <label htmlFor={tokenId} className="label">
               アクセストークン
             </label>
@@ -206,7 +238,20 @@ export function AccessSettingsDialog({
               閲覧者
             </p>
 
-            {viewer.locked ? (
+            {googleAuth ? (
+              <p className="mt-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+                {viewer.member ? (
+                  <>
+                    <span className="font-medium">{viewer.member.name}</span> として
+                    {viewer.scope === 'personal' ? '個人の実績のみ' : '全社'}を表示しています。
+                  </>
+                ) : (
+                  <>全社を表示しています。</>
+                )}
+                <br />
+                サインインしたアカウントに応じてサーバー側で決まるため、画面からは変更できません。
+              </p>
+            ) : viewer.locked ? (
               <p className="mt-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
                 このブラウザは <span className="font-medium">{viewer.member?.name}</span>{' '}
                 の個人ビューに固定されています。切り替えが必要な場合は管理者に連絡してください。

@@ -13,6 +13,24 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 /** GAS ウェブアプリのデプロイ URL（/exec） */
 export const GAS_API_URL: string = import.meta.env.VITE_GAS_API_URL ?? '';
 
+/**
+ * Google OAuth クライアント ID。設定されていると Google アカウント認証が有効になる。
+ * クライアント ID は公開前提の値なので、ビルドに埋め込んでよい
+ * （秘密なのはクライアントシークレットの方で、この構成では使わない）。
+ */
+export const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
+
+/**
+ * サインインを許可する組織ドメイン（Google Workspace の hd）。
+ * 例: `gooner.space`。画面側のヒントで、実際の強制は GAS 側の ALLOWED_HD が行う。
+ */
+export const GOOGLE_HD: string = import.meta.env.VITE_GOOGLE_HD ?? '';
+
+/** Google アカウント認証を使う構成か */
+export function isGoogleAuthEnabled(): boolean {
+  return GOOGLE_CLIENT_ID.trim().length > 0;
+}
+
 /** 自動同期の間隔（ミリ秒）。0 以下なら自動同期しない */
 export const SYNC_INTERVAL_MS: number = (() => {
   const raw = Number(import.meta.env.VITE_SYNC_INTERVAL_MS);

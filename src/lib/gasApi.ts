@@ -104,6 +104,7 @@ export async function fetchSales(config: GasApiConfig): Promise<ApiResult<GasGet
     // キャッシュ回避のためタイムスタンプを、認証のためトークンを付与する
     const params = new URLSearchParams({ t: String(Date.now()) });
     if (config.token) params.set('token', config.token);
+    if (config.idToken) params.set('idToken', config.idToken);
     const url = `${config.baseUrl}${config.baseUrl.includes('?') ? '&' : '?'}${params.toString()}`;
 
     const res = await fetchWithTimeout(config, url, {
@@ -135,7 +136,13 @@ export async function fetchSales(config: GasApiConfig): Promise<ApiResult<GasGet
     const sales = (body.sales ?? []).map((r, i) => normalizeSaleRecord(r, i));
     return {
       ok: true,
-      data: { status: 'success', timestamp: body.timestamp, count: sales.length, sales },
+      data: {
+        status: 'success',
+        timestamp: body.timestamp,
+        count: sales.length,
+        sales,
+        viewer: body.viewer,
+      },
     };
   } catch (error) {
     return { ok: false, error: toMessage(error) };
@@ -162,6 +169,7 @@ export async function postSale(
 
   const body: GasPostBody = { action, data: record };
   if (config.token) body.token = config.token;
+  if (config.idToken) body.idToken = config.idToken;
 
   try {
     const res = await fetchWithTimeout(config, config.baseUrl, {

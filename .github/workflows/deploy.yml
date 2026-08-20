@@ -41,6 +41,10 @@ jobs:
           # Settings → Secrets and variables → Actions → Variables で設定する
           VITE_GAS_API_URL: ${{ vars.VITE_GAS_API_URL }}
           VITE_SYNC_INTERVAL_MS: ${{ vars.VITE_SYNC_INTERVAL_MS }}
+          # Google アカウント認証（設定するとサインイン必須になる）。
+          # クライアント ID は公開前提の値なので Variables でよい（Secrets 不要）
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          VITE_GOOGLE_HD: ${{ vars.VITE_GOOGLE_HD }}
         run: npm run build
 
       - name: Pages の設定

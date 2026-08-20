@@ -125,6 +125,25 @@ export interface SaleRecord {
 /** POST 時に送る 1 レコード（sheetRow を持たない） */
 export type SaleRecordInput = Omit<SaleRecord, 'sheetRow'>;
 
+/**
+ * GAS が返す閲覧者情報。
+ *
+ * 誰としてアクセスしているかは**サーバーが決める**。Google 認証が有効なときは
+ * ID トークンから解決され、`scope: 'personal'` のメンバーには自分の事業部の行しか
+ * 返ってこない（ブラウザ側を書き換えても他事業部は見られない）。
+ */
+export interface ServerViewer {
+  /** `google` = Google アカウント認証 / `token` = 従来の合言葉（全社閲覧） */
+  mode: 'google' | 'token';
+  memberId: MemberId | null;
+  name: string;
+  email: string;
+  /** 所属事業部の表示名 */
+  dept: string;
+  role: MemberRole;
+  scope: 'company' | 'personal';
+}
+
 /** doGet の成功レスポンス */
 export interface GasGetSuccess {
   status: 'success';
@@ -132,6 +151,8 @@ export interface GasGetSuccess {
   timestamp: string;
   count: number;
   sales: SaleRecord[];
+  /** 閲覧者。Google 認証を入れる前のデプロイでは返ってこない */
+  viewer?: ServerViewer;
 }
 
 /** doGet / doPost のエラーレスポンス */
@@ -158,6 +179,8 @@ export interface GasPostBody {
   data: SaleRecordInput;
   /** アクセストークン。GAS 側で AUTH_TOKEN が設定されている場合に必須 */
   token?: string;
+  /** Google の ID トークン。GAS 側で GOOGLE_CLIENT_ID が設定されている場合に必須 */
+  idToken?: string;
 }
 
 /** gasApi のクライアント設定 */
@@ -169,6 +192,11 @@ export interface GasApiConfig {
    * ビルドには埋め込まず、利用者が画面から入力した値を渡す。
    */
   token?: string;
+  /**
+   * Google アカウント認証の ID トークン（JWT）。
+   * GAS 側で GOOGLE_CLIENT_ID が設定されているときはこれが本人確認に使われる。
+   */
+  idToken?: string;
   /** タイムアウト（ミリ秒）。既定 15000 */
   timeoutMs?: number;
   /**
