@@ -68,8 +68,28 @@
 
 ### B-1. コードを最新にする
 
-`gas/Code.gs` の内容を Apps Script エディタに貼り付ける
-（GitHub Actions の「Deploy GAS」ワークフローを使っている場合は自動で反映される）。
+`gas/Code.gs` の内容を Apps Script エディタに貼り付ける。
+
+GitHub Actions の「Deploy GAS」ワークフローを使っている場合は push で自動反映されるが、
+**clasp の認証は数週間で切れる**。切れているとワークフローが次のエラーで失敗し、
+コードは反映されない（サイト側のデプロイは成功するので気づきにくい）。
+
+```
+{"error":"invalid_grant","error_description":"reauth related error (invalid_rapt)"}
+```
+
+この場合はどちらかで対処する:
+
+- **手軽に済ませる** — Apps Script エディタに `gas/Code.gs` を貼り付けて保存する
+- **自動デプロイを直す** — ローカルで再認証し、認証情報を登録し直す
+
+  ```bash
+  npx @google/clasp@3.3.0 logout
+  npx @google/clasp@3.3.0 login --no-localhost
+  ./scripts/setup-gas-deploy.sh        # CLASP_CREDENTIALS を更新する
+  ```
+
+いずれの場合も、このあと **B-4 の再デプロイ**まで済ませないと反映されない。
 
 ### B-2. スクリプトプロパティを設定する
 
