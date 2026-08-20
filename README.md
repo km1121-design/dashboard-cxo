@@ -172,6 +172,8 @@ src/
 │   ├── gasApi.ts             GAS Web API クライアント（環境非依存・テスト可能）
 │   ├── env.ts                import.meta.env の読み出しを閉じ込めた層
 │   ├── credentials.ts        トークン・URL の localStorage 保管
+│   ├── googleAuth.ts         Google Identity Services（サインイン・トークン保持）
+│   ├── jwt.ts                ID トークンの読み取り（表示と期限管理のみ）
 │   ├── viewer.ts             閲覧者（全社／個人）の解決
 │   └── reportDraft.ts        日報の下書き保存
 ├── utils/
@@ -184,15 +186,18 @@ src/
 ├── constants/master.ts       メンバー／事業部マスタ・報酬ルール定数
 ├── hooks/
 │   ├── useSalesData.ts       GAS 同期（手動・自動）
+│   ├── useGoogleAuth.ts      Google サインインの状態管理
 │   └── useMonthlyInputs.ts   経費・決定件数の月次手入力（localStorage）
 ├── components/
 │   ├── charts/               インライン SVG のグラフ（依存ライブラリなし）
 │   ├── PersonalView.tsx      個人実績ビュー（入舩・中原）
+│   ├── SignInScreen.tsx      Google サインイン画面
 │   └── …                     全社3ビュー・日報モーダル・共通部品
 └── App.tsx                   閲覧者・閲覧モードの切替とレイアウト
 
-gas/Code.gs                   GAS Web API（指示書 4章のコードそのまま）
+gas/Code.gs                   GAS Web API（認証・行フィルタを含む）
 docs/claude_code_handoff.md   開発引き継ぎ指示書
+docs/google-auth-setup.md     Google アカウント認証の設定手順
 ```
 
 ## 機能
@@ -218,7 +223,33 @@ docs/claude_code_handoff.md   開発引き継ぎ指示書
 
 全社合計と他事業部の数字は出さない。
 
-**切り替え方**
+**誰として見るかの決め方は 2 通りある。**
+
+### ① Google アカウント認証（推奨・実効的な分離）
+
+`VITE_GOOGLE_CLIENT_ID` と GAS の `GOOGLE_CLIENT_ID` を設定すると有効になる。
+
+1. ブラウザで Google にサインインし、ID トークン（JWT）を得る
+2. トークンを GAS に渡す
+3. GAS が Google の `tokeninfo` で検証し、メールアドレスからメンバーを引く
+4. **役職 Manager には自分の事業部の行しか返さない**
+
+絞り込みがサーバー側で行われるため、`localStorage` を書き換えても開発者ツールを開いても
+他事業部の数字は取得できない（そもそも届かない）。この状態では画面から閲覧者を
+切り替えることもできない。
+
+設定手順は **[docs/google-auth-setup.md](docs/google-auth-setup.md)** にまとめてある。
+
+| 役職 | 対象 | 返る行 |
+| --- | --- | --- |
+| Manager | 入舩・中原 | 自分の事業部の行 ＋ 店舗運営(BAR) の行 |
+| Admin | 三田・本部 | 全行 |
+
+BAR の行を全員に返しているのは、中原氏の「他部紹介 BAR売上10%」の計算に必要なため。
+店舗の売上行であり、個人が特定される情報は含まない。
+書き込み（日報・売上の追記）も自分の事業部に限定される。
+
+### ② 配布リンク／ローカル設定（Google 認証を使わない場合）
 
 | 方法 | 使い方 |
 | --- | --- |
@@ -227,10 +258,10 @@ docs/claude_code_handoff.md   開発引き継ぎ指示書
 
 管理者は「接続設定」からメンバーごとの配布リンクをコピーできる。
 
-> **これは権限制御ではない。**
-> GAS のアクセストークンは全員共通のため、`localStorage` を書き換えれば全社ビューに戻れる。
+> **②は権限制御ではない。**
+> アクセストークンが全員共通のため、`localStorage` を書き換えれば全社ビューに戻れる。
 > やっているのは「見せる情報の切り分け」であって、アクセスの強制ではない。
-> 強制するには GAS 側でメンバーごとにトークンを持ち、返す行を絞る必要がある（未実装）。
+> 実効的に分けたい場合は①を使うこと。
 
 ### グラフ
 
@@ -282,8 +313,8 @@ CSV は Excel で文字化けしないよう UTF-8 BOM 付き・CRLF 改行で�
 ## テスト
 
 ```
-Test Suites: 8 passed, 8 total
-Tests:       162 passed, 162 total
+Test Suites: 9 passed, 9 total
+Tests:       199 passed, 199 total
 ```
 
 計算エンジンは指示書の数式・閾値・サンプル値をそのままテストケースにしている。
@@ -334,6 +365,11 @@ LINE フォーマットは指示書 6章のサンプル出力と **1 文字単�
 指示書に具体的な金額の記載がないため、イベント営業・人材ともに
 吐き出しインセンティブの閾値と同じ **100万円** を暫定値として置いている。
 確定値が決まり次第 `src/constants/master.ts` を更新すること。
+
+### 6-1. Google 認証を使わない場合の閲覧者切り分け
+
+`GOOGLE_CLIENT_ID` を設定していない構成では、閲覧者の切り分けは表示だけのもので、
+権限の強制ではない（上記「閲覧者の切り分け」②）。実効的に分けたい場合は①を設定する。
 
 ### 6. 月次入力（経費・件数）はブラウザ単位で保存される
 

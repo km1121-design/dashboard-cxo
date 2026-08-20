@@ -5,10 +5,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getDefaultConfig, SYNC_INTERVAL_MS } from '@/lib/env';
 import { fetchSales, postDailyReport, postSale } from '@/lib/gasApi';
-import type { GasApiConfig, SaleRecord, SaleRecordInput, SyncState } from '@/types';
+import type { GasApiConfig, SaleRecord, SaleRecordInput, ServerViewer, SyncState } from '@/types';
+
+export interface UseSalesDataOptions {
+  /** Google 認証の ID トークン。変わるたびに取り直す */
+  idToken?: string;
+  /**
+   * 同期してよいか。Google 認証を使う構成では、サインインが済むまで false にする
+   * （未サインインのまま叩いても弾かれるだけなので）。
+   */
+  ready?: boolean;
+  /** 明示的な接続設定。省略時は毎回 `getDefaultConfig()` を読み直す */
+  config?: GasApiConfig;
+}
 
 export interface UseSalesDataResult {
   records: SaleRecord[];
+  /** GAS が返した閲覧者。Google 認証を入れる前のデプロイでは null */
+  serverViewer: ServerViewer | null;
   state: SyncState;
   error: string | null;
   /** 最終同期時刻 */
@@ -25,12 +39,14 @@ export interface UseSalesDataResult {
 }
 
 /**
- * @param config 省略時は毎回 `getDefaultConfig()` を読み直す。
- *   接続設定（トークン・URL）は画面から変更できるため、
- *   固定した設定を保持せず、同期のたびに最新の値を取得する。
+ * 接続設定（トークン・URL）は画面から変更できるため、固定した設定は保持せず、
+ * 同期のたびに最新の値を読み直す。
  */
-export function useSalesData(config?: GasApiConfig): UseSalesDataResult {
+export function useSalesData(options: UseSalesDataOptions = {}): UseSalesDataResult {
+  const { idToken = '', ready = true, config } = options;
+
   const [records, setRecords] = useState<SaleRecord[]>([]);
+  const [serverViewer, setServerViewer] = useState<ServerViewer | null>(null);
   const [state, setState] = useState<SyncState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
@@ -40,9 +56,14 @@ export function useSalesData(config?: GasApiConfig): UseSalesDataResult {
   const configRef = useRef(config);
   configRef.current = config;
 
-  const resolveConfig = useCallback((): GasApiConfig => configRef.current ?? getDefaultConfig(), []);
+  const resolveConfig = useCallback(
+    (): GasApiConfig => configRef.current ?? { ...getDefaultConfig(), idToken },
+    [idToken],
+  );
 
   const sync = useCallback(async () => {
+    if (!ready) return;
+
     setState('loading');
     setError(null);
 
@@ -50,16 +71,19 @@ export function useSalesData(config?: GasApiConfig): UseSalesDataResult {
 
     if (result.ok) {
       setRecords(result.data.sales);
+      setServerViewer(result.data.viewer ?? null);
       setLastSyncedAt(new Date());
       setState('success');
     } else {
       setError(result.error);
       setState('error');
     }
-  }, [resolveConfig]);
+  }, [resolveConfig, ready]);
 
   const post = useCallback(
     async (record: SaleRecordInput, kind: 'sale' | 'report'): Promise<boolean> => {
+      if (!ready) return false;
+
       setState('loading');
       setError(null);
 
@@ -76,7 +100,7 @@ export function useSalesData(config?: GasApiConfig): UseSalesDataResult {
       await sync();
       return true;
     },
-    [sync, resolveConfig],
+    [sync, resolveConfig, ready],
   );
 
   const addSale = useCallback((r: SaleRecordInput) => post(r, 'sale'), [post]);
@@ -96,6 +120,7 @@ export function useSalesData(config?: GasApiConfig): UseSalesDataResult {
 
   return {
     records,
+    serverViewer,
     state,
     error,
     lastSyncedAt,

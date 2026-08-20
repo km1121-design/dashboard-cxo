@@ -45,6 +45,16 @@ function wrap(ss: FakeSpreadsheet) {
   };
 }
 
+/** tokeninfo が返す JWT のペイロード相当 */
+interface FakeTokenInfo {
+  aud?: string;
+  email?: string;
+  email_verified?: string;
+  hd?: string;
+  /** 秒。省略時は 1 時間後 */
+  exp?: number;
+}
+
 interface LoadOptions {
   /** getActiveSpreadsheet() の戻り値。null ならスタンドアロン相当 */
   active: FakeSpreadsheet | null;
@@ -52,6 +62,8 @@ interface LoadOptions {
   props?: Record<string, string>;
   /** openById で開けるスプレッドシート */
   byId?: Record<string, FakeSpreadsheet>;
+  /** ID トークン文字列 → tokeninfo のレスポンス。未登録のトークンは 400 を返す */
+  tokenInfo?: Record<string, FakeTokenInfo>;
 }
 
 interface GasApi {
@@ -60,12 +72,14 @@ interface GasApi {
   getTargetSpreadsheet: () => { label: string };
   isAuthorized: (token: unknown) => boolean;
   generateAuthToken: () => string;
+  resolveIdentity: (idToken: unknown, token: unknown) => Record<string, unknown>;
 }
 
 /** Code.gs をスタブ環境で評価して関数を取り出す */
-function load(options: LoadOptions): { api: GasApi; opened: string[] } {
-  const { active, props = {}, byId = {} } = options;
+function load(options: LoadOptions): { api: GasApi; opened: string[]; fetched: string[] } {
+  const { active, props = {}, byId = {}, tokenInfo = {} } = options;
   const opened: string[] = [];
+  const fetched: string[] = [];
 
   const sandbox = {
     SpreadsheetApp: {
@@ -84,16 +98,32 @@ function load(options: LoadOptions): { api: GasApi; opened: string[] } {
       createTextOutput: (t: string) => ({ text: t, setMimeType: () => ({ text: t }) }),
     },
     Logger: { log: () => undefined },
+    // Google の tokeninfo を模す。登録のない ID トークンは 400 を返す
+    UrlFetchApp: {
+      fetch: (url: string) => {
+        fetched.push(url);
+        const raw = decodeURIComponent(url.split('id_token=')[1] ?? '');
+        const info = tokenInfo[raw];
+        if (!info) return { getResponseCode: () => 400, getContentText: () => '{}' };
+        const body = {
+          email_verified: 'true',
+          exp: String(Math.floor(Date.now() / 1000) + 3600),
+          ...info,
+        };
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify(body) };
+      },
+    },
+    // CacheService は使わない構成でも動く必要があるため undefined のままにする
   };
 
   const keys = Object.keys(sandbox);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const factory = new Function(
     ...keys,
-    `${CODE_GS}\n;return { doGet, doPost, getTargetSpreadsheet, isAuthorized, generateAuthToken };`,
+    `${CODE_GS}\n;return { doGet, doPost, getTargetSpreadsheet, isAuthorized, generateAuthToken, resolveIdentity };`,
   );
   const api = factory(...keys.map((k) => sandbox[k as keyof typeof sandbox])) as GasApi;
-  return { api, opened };
+  return { api, opened, fetched };
 }
 
 const parse = (r: { text: string }) => JSON.parse(r.text);
@@ -242,5 +272,251 @@ describe('generateAuthToken', () => {
     const token = api.generateAuthToken();
     expect(token).toHaveLength(32);
     expect(token).toMatch(/^[A-Za-z0-9]{32}$/);
+  });
+});
+
+/* ==========================================================================
+ * Google アカウント認証
+ * ========================================================================== */
+
+const CLIENT_ID = '1234567890-abcdefg.apps.googleusercontent.com';
+
+const GOOGLE_PROPS = {
+  GOOGLE_CLIENT_ID: CLIENT_ID,
+  MEMBER_EMAILS: JSON.stringify({
+    'irifune@gooner.space': 'M001',
+    'Nakahara@Gooner.space': 'M002',
+    'mita@gooner.space': 'M003',
+  }),
+};
+
+/** t_sales の 1 行を作る（17 列） */
+function row(id: string, dept: string, category: string, member: string, gross: number) {
+  return [id, '2026-08-12', dept, category, member, gross, 1, 0, 0, 0, 0, 0, 0, 0, 0, '', ''];
+}
+
+const SALES_ROWS = [
+  HEADER,
+  row('E1', 'イベント営業', '店舗運営(BAR)', '入舩 雄志', 100_000),
+  row('E2', 'イベント営業', 'イベント', '入舩 雄志', 800_000),
+  row('H1', '人材', '人材紹介(広告)', '中原 聖人', 600_000),
+  row('L1', '物流・バックヤード', '物流', '三田 航大', 180_000),
+];
+
+function loadWithGoogle(tokenInfo: Record<string, FakeTokenInfo>, extraProps: Record<string, string> = {}) {
+  return load({
+    active: makeSpreadsheet('bound', SALES_ROWS.map((r) => [...r])),
+    props: { ...GOOGLE_PROPS, ...extraProps },
+    tokenInfo,
+  });
+}
+
+describe('Google アカウント認証（GOOGLE_CLIENT_ID 未設定なら従来動作）', () => {
+  it('未設定なら AUTH_TOKEN 方式のまま動く', () => {
+    const { api, fetched } = load({
+      active: makeSpreadsheet('bound', [HEADER]),
+      props: { AUTH_TOKEN: 'secret' },
+    });
+
+    expect(parse(api.doGet({ parameter: { token: 'secret' } })).status).toBe('success');
+    // Google には一切問い合わせない
+    expect(fetched).toHaveLength(0);
+  });
+
+  it('未設定のときの viewer は全社スコープ', () => {
+    const { api } = load({ active: makeSpreadsheet('bound', [HEADER]) });
+    const body = parse(api.doGet({ parameter: {} }));
+
+    expect(body.viewer).toEqual({
+      mode: 'token',
+      memberId: null,
+      name: '',
+      email: '',
+      dept: '',
+      role: 'Admin',
+      scope: 'company',
+    });
+  });
+});
+
+describe('Google アカウント認証（有効時）', () => {
+  it('ID トークンが無ければ拒否する', () => {
+    const { api } = loadWithGoogle({});
+    const body = parse(api.doGet({ parameter: {} }));
+
+    expect(body.status).toBe('error');
+    expect(body.message).toContain('サインイン');
+  });
+
+  it('AUTH_TOKEN だけのリクエストは通らない（合言葉では入れない）', () => {
+    const { api } = loadWithGoogle({}, { AUTH_TOKEN: 'secret' });
+    expect(parse(api.doGet({ parameter: { token: 'secret' } })).status).toBe('error');
+  });
+
+  it('Google が検証できないトークンは拒否する', () => {
+    const { api } = loadWithGoogle({ good: { aud: CLIENT_ID, email: 'irifune@gooner.space' } });
+    expect(parse(api.doGet({ parameter: { idToken: 'forged' } })).status).toBe('error');
+  });
+
+  it('他アプリ向けのトークン（aud 不一致）は拒否する', () => {
+    const { api } = loadWithGoogle({
+      other: { aud: 'someone-else.apps.googleusercontent.com', email: 'irifune@gooner.space' },
+    });
+    const body = parse(api.doGet({ parameter: { idToken: 'other' } }));
+
+    expect(body.status).toBe('error');
+    expect(body.message).toContain('このアプリ向け');
+  });
+
+  it('期限切れのトークンは拒否する', () => {
+    const { api } = loadWithGoogle({
+      stale: {
+        aud: CLIENT_ID,
+        email: 'irifune@gooner.space',
+        exp: Math.floor(Date.now() / 1000) - 60,
+      },
+    });
+    const body = parse(api.doGet({ parameter: { idToken: 'stale' } }));
+
+    expect(body.status).toBe('error');
+    expect(body.message).toContain('有効期限');
+  });
+
+  it('メール未確認のアカウントは拒否する', () => {
+    const { api } = loadWithGoogle({
+      unverified: { aud: CLIENT_ID, email: 'irifune@gooner.space', email_verified: 'false' },
+    });
+    expect(parse(api.doGet({ parameter: { idToken: 'unverified' } })).status).toBe('error');
+  });
+
+  it('名簿に無いメールアドレスは拒否する', () => {
+    const { api } = loadWithGoogle({
+      stranger: { aud: CLIENT_ID, email: 'stranger@example.com' },
+    });
+    const body = parse(api.doGet({ parameter: { idToken: 'stranger' } }));
+
+    expect(body.status).toBe('error');
+    expect(body.message).toContain('登録されていません');
+  });
+
+  it('ALLOWED_HD を設定すると組織外のアカウントを弾く', () => {
+    const { api } = loadWithGoogle(
+      { outside: { aud: CLIENT_ID, email: 'irifune@gooner.space', hd: 'example.com' } },
+      { ALLOWED_HD: 'gooner.space' },
+    );
+    const body = parse(api.doGet({ parameter: { idToken: 'outside' } }));
+
+    expect(body.status).toBe('error');
+    expect(body.message).toContain('gooner.space');
+  });
+
+  it('ALLOWED_HD が一致すれば通る', () => {
+    const { api } = loadWithGoogle(
+      { inside: { aud: CLIENT_ID, email: 'irifune@gooner.space', hd: 'gooner.space' } },
+      { ALLOWED_HD: 'gooner.space' },
+    );
+    expect(parse(api.doGet({ parameter: { idToken: 'inside' } })).status).toBe('success');
+  });
+
+  it('名簿のメールは大文字小文字を区別せず引ける', () => {
+    const { api } = loadWithGoogle({
+      nakahara: { aud: CLIENT_ID, email: 'nakahara@gooner.space' },
+    });
+    const body = parse(api.doGet({ parameter: { idToken: 'nakahara' } }));
+
+    expect(body.status).toBe('success');
+    expect(body.viewer.memberId).toBe('M002');
+  });
+});
+
+describe('Google 認証 — 役職ごとに返す行を絞る', () => {
+  it('Manager（入舩）にはイベント営業の行だけを返す', () => {
+    const { api } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'irifune@gooner.space' } });
+    const body = parse(api.doGet({ parameter: { idToken: 't' } }));
+
+    expect(body.viewer).toMatchObject({
+      mode: 'google',
+      memberId: 'M001',
+      role: 'Manager',
+      scope: 'personal',
+      dept: 'イベント営業',
+    });
+    expect(body.sales.map((r: { id: string }) => r.id)).toEqual(['E1', 'E2']);
+  });
+
+  it('Manager（中原）には人材の行と BAR の行だけを返す（クロスセル計算に必要）', () => {
+    const { api } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'nakahara@gooner.space' } });
+    const body = parse(api.doGet({ parameter: { idToken: 't' } }));
+
+    // 人材の行と BAR の行は来るが、イベント案件（E2）と物流（L1）は来ない
+    expect(body.sales.map((r: { id: string }) => r.id).sort()).toEqual(['E1', 'H1']);
+    expect(body.count).toBe(2);
+  });
+
+  it('Admin（三田）には全行を返す', () => {
+    const { api } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'mita@gooner.space' } });
+    const body = parse(api.doGet({ parameter: { idToken: 't' } }));
+
+    expect(body.viewer).toMatchObject({ memberId: 'M003', role: 'Admin', scope: 'company' });
+    expect(body.sales).toHaveLength(4);
+  });
+});
+
+describe('Google 認証 — 書き込みの制限', () => {
+  const record = (dept: string) => ({
+    id: 'NEW1',
+    date: '2026-08-20',
+    dept,
+    category: 'イベント',
+    member: '入舩 雄志',
+    gross: 1000,
+  });
+
+  const post = (api: GasApi, idToken: string, dept: string) =>
+    parse(
+      api.doPost({
+        postData: { contents: JSON.stringify({ action: 'addSale', idToken, data: record(dept) }) },
+      }),
+    );
+
+  it('Manager は自分の事業部の行を追記できる', () => {
+    const { api } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'irifune@gooner.space' } });
+    expect(post(api, 't', 'イベント営業').status).toBe('success');
+  });
+
+  it('Manager は他事業部の行を追記できない', () => {
+    const { api } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'irifune@gooner.space' } });
+    const body = post(api, 't', '人材');
+
+    expect(body.status).toBe('error');
+    expect(body.message).toContain('イベント営業 以外');
+  });
+
+  it('Admin はどの事業部の行でも追記できる', () => {
+    const { api } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'mita@gooner.space' } });
+    expect(post(api, 't', '人材').status).toBe('success');
+  });
+
+  it('サインインしていない POST は拒否する', () => {
+    const { api } = loadWithGoogle({});
+    const body = parse(
+      api.doPost({
+        postData: { contents: JSON.stringify({ action: 'addSale', data: record('イベント営業') }) },
+      }),
+    );
+    expect(body.status).toBe('error');
+  });
+});
+
+describe('resolveIdentity', () => {
+  it('同じトークンでの連続アクセスでも tokeninfo は毎回呼ばれる（キャッシュ無効環境）', () => {
+    const { api, fetched } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'mita@gooner.space' } });
+
+    api.doGet({ parameter: { idToken: 't' } });
+    api.doGet({ parameter: { idToken: 't' } });
+
+    // CacheService が使える本番では 2 回目はキャッシュに当たる
+    expect(fetched).toHaveLength(2);
+    expect(fetched[0]).toContain('id_token=t');
   });
 });

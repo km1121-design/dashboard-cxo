@@ -4,14 +4,19 @@
  * 入舩・中原（役職 Manager）は全体ダッシュボードではなく自分の実績だけを見る。
  * 三田・本部（役職 Admin）は従来どおり全社を見る。
  *
- * ## これはアクセス制御ではない
- * GAS のアクセストークンは全員で共通のため、ブラウザに保存された閲覧者を
- * 書き換えれば全社ビューに戻れる。ここでやっているのは「見せる情報の切り分け」
- * であって、権限の強制ではない。強制するには GAS 側でメンバーごとのトークンを
- * 持ち、返す行を絞る必要がある（未実装）。
+ * ## 決め方は 2 通り
+ *
+ * 1. **Google アカウント認証（推奨）** — GAS が ID トークンから本人を判定し、
+ *    レスポンスに `viewer` を載せて返す。Manager には自分の事業部の行しか
+ *    返ってこないため、ブラウザ側を書き換えても他事業部は見られない。
+ *    この場合 `fromServerViewer()` の結果が常に優先される。
+ *
+ * 2. **配布リンク／ローカル設定（従来）** — `?viewer=M001&lock=1` と localStorage で
+ *    決める。こちらは**表示の切り分けであって権限の強制ではない**。
+ *    保存値を書き換えれば全社ビューに戻れる（データ自体は全件返ってくる）。
  */
 import { MEMBERS, MEMBER_BY_ID } from '@/constants/master';
-import type { Member, MemberId } from '@/types';
+import type { Member, MemberId, ServerViewer } from '@/types';
 
 /** 閲覧者ID。`all` は全社ビュー */
 export type ViewerId = 'all' | MemberId;
@@ -83,6 +88,22 @@ export function buildViewerLink(baseUrl: string, id: ViewerId, locked = true): s
   if (locked) params.set(LOCK_PARAM, '1');
   else params.delete(LOCK_PARAM);
   return `${path}?${params.toString()}`;
+}
+
+/**
+ * GAS が返した閲覧者から `Viewer` を作る。
+ *
+ * サーバーの判定が最終的な正。マスタとサーバーで食い違った場合は
+ * **狭い方（personal）に倒す**。
+ */
+export function fromServerViewer(server?: ServerViewer | null): Viewer | null {
+  if (!server || server.mode !== 'google' || !server.memberId) return null;
+
+  const base = toViewer(server.memberId, true);
+  const scope: ViewerScope =
+    server.scope === 'personal' || base.scope === 'personal' ? 'personal' : 'company';
+
+  return { ...base, scope, locked: true };
 }
 
 /* ------------------------------------------------------------ 保存・読み出し */
