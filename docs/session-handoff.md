@@ -25,6 +25,7 @@ Claude Code の新規セッションで作業を再開するための現状ま�
 | CI（型チェック・テスト・ビルド） | 通過（テスト 199 件） |
 | 閲覧者の切り分け（個人ビュー） | 実装済み |
 | Google アカウント認証 | コードは実装済み。**有効化には Google Cloud / Apps Script / GitHub の設定が必要**（docs/google-auth-setup.md） |
+| GAS 自動デプロイ（Deploy GAS） | **失敗中**。clasp の認証切れ（invalid_rapt）。gas/Code.gs の変更は Apps Script に未反映 |
 
 ---
 
@@ -119,6 +120,18 @@ docs/gas-deploy-setup.md    その手順書（他プロジェクトへ流用可�
 
 **2 と 4 は支給額に直結する。** 初回の月次締めで実際の数字と照合してほしい。
 変更は `src/constants/master.ts` と `src/utils/calculator.ts` の該当関数のみで済む。
+
+### GAS 自動デプロイが失敗している
+
+「Deploy GAS」ワークフローは clasp の認証切れ（`invalid_rapt`）で失敗する状態が続いている
+（2026-08-19 に手動で再認証して一度復旧したが、また切れている）。
+**サイト側のデプロイは成功するため気づきにくい**が、この間 `gas/Code.gs` の変更は
+Apps Script に反映されない。
+
+対処は 2 通り。手順は `docs/google-auth-setup.md` の B-1 にある。
+
+- Apps Script エディタに `gas/Code.gs` を貼り付ける（手軽）
+- `clasp logout` → `clasp login` → `./scripts/setup-gas-deploy.sh` で認証情報を更新する
 
 **6・7・8 は今回の実装で残した割り切り。** 詳細と対処案は README の「仕様解釈のメモ」6〜7 と
 「閲覧者の切り分け」節にある。要点だけ:
