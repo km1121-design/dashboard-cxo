@@ -1,7 +1,7 @@
 /**
  * 計算エンジンのテスト（引き継ぎ指示書 5章／6章 の数式・数値をそのまま検証）
  */
-import { BAR_CATEGORY, RULES } from '@/constants/master';
+import { BAR_CATEGORY, FISCAL_START_MONTH, RULES } from '@/constants/master';
 import type { DailyReportInput, SaleRecord } from '@/types';
 import {
   buildCarryOver,
@@ -620,19 +620,66 @@ describe('calcMemberMonthly', () => {
 });
 
 describe('calcMemberAnnual', () => {
-  const records = [sale({ date: '2025-09-10', category: BAR_CATEGORY, gross: 2_000_000 })];
+  const records = [sale({ date: '2026-09-10', category: BAR_CATEGORY, gross: 2_000_000 })];
 
   it('期首から12ヶ月分を月別に積み上げる', () => {
-    const annual = calcMemberAnnual(records, 'M001', {}, '2025-08');
+    const annual = calcMemberAnnual(records, 'M001', {}, '2026-08');
 
     expect(annual.months).toHaveLength(12);
-    expect(annual.months[0].month).toBe('2025-08');
-    expect(annual.months[11].month).toBe('2026-07');
+    expect(annual.months[0].month).toBe('2026-08');
+    expect(annual.months[11].month).toBe('2027-07');
     expect(annual.personalGrossTotal).toBe(2_000_000);
     // 基本給は 12 ヶ月分
     expect(annual.annualBase).toBe(RULES.eventBaseSalary * 12);
     expect(annual.annualTotal).toBe(
       annual.annualBase + annual.annualIncentive + annual.annualBonusPool,
     );
+  });
+});
+
+/* ============================================================================
+ * 期の範囲（第5期 = 2026-08 〜 2027-07）
+ * ========================================================================== */
+
+describe('第5期の集計範囲', () => {
+  it('期首月は 2026-08', () => {
+    expect(FISCAL_START_MONTH).toBe('2026-08');
+  });
+
+  it('既定の通期は 2026-08 から 2027-07 までの12ヶ月', () => {
+    const total = calcTotalSummary([]);
+
+    expect(total.fiscalStartMonth).toBe('2026-08');
+    expect(total.months).toHaveLength(12);
+    expect(total.months[0].month).toBe('2026-08');
+    expect(total.months[11].month).toBe('2027-07');
+  });
+
+  it('期首月の売上が通期に入る', () => {
+    const total = calcTotalSummary([
+      sale({ date: '2026-08-15', category: BAR_CATEGORY, gross: 500_000 }),
+    ]);
+    expect(total.grossSales).toBe(500_000);
+  });
+
+  it('前期（2026-07 以前）の売上は通期に入らない', () => {
+    const total = calcTotalSummary([
+      sale({ date: '2026-07-31', category: BAR_CATEGORY, gross: 900_000 }),
+    ]);
+    expect(total.grossSales).toBe(0);
+  });
+
+  it('期末月（2027-07）の売上は通期に入る', () => {
+    const total = calcTotalSummary([
+      sale({ date: '2027-07-01', category: BAR_CATEGORY, gross: 300_000 }),
+    ]);
+    expect(total.grossSales).toBe(300_000);
+  });
+
+  it('翌期（2027-08 以降）の売上は通期に入らない', () => {
+    const total = calcTotalSummary([
+      sale({ date: '2027-08-01', category: BAR_CATEGORY, gross: 400_000 }),
+    ]);
+    expect(total.grossSales).toBe(0);
   });
 });

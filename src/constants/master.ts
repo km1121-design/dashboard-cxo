@@ -4,8 +4,14 @@
  */
 import type { Dept, DeptId, DeptLabel, Member } from '@/types';
 
-/** 第5期の開始月（`YYYY-MM`） */
-export const FISCAL_START_MONTH = '2025-08';
+/**
+ * 第5期の開始月（`YYYY-MM`）。第5期は 2026-08 〜 2027-07。
+ *
+ * 通期ビューと年収シミュレーションはここから 12 ヶ月を集計する。
+ * 指示書に期首月の記載がないため確認して確定した値。
+ * 第6期に入るときはここだけ更新すればよい。
+ */
+export const FISCAL_START_MONTH = '2026-08';
 
 /** 店舗名 */
 export const STORE_NAME = 'BARROOTS';
