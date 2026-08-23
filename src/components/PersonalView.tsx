@@ -5,21 +5,18 @@
  * 根拠）・本人の支給見立てだけを扱う。他事業部と全社合計は含めない。
  */
 import { Banknote, Download, PiggyBank, Printer, Store, TrendingUp, Wallet } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { AchievementMeter } from '@/components/charts/AchievementMeter';
+import { DeptInputCard } from '@/components/DeptInputCard';
 import { DailySalesChart } from '@/components/charts/DailySalesChart';
 import { MixDonut } from '@/components/charts/MixDonut';
 import { TrendChart } from '@/components/charts/TrendChart';
 import { MemberPayoutCard } from '@/components/MemberPayoutCard';
-import { NumberField } from '@/components/NumberField';
 import { StatCard } from '@/components/StatCard';
 import { BAR_CATEGORY, STORE_NAME } from '@/constants/master';
+import type { UseMonthlyInputsResult } from '@/hooks/useMonthlyInputs';
 import type { Member, SaleRecord } from '@/types';
-import {
-  calcDailyProgress,
-  calcMemberAnnual,
-  calcMemberMonthly,
-  type MonthlyInputs,
-} from '@/utils/calculator';
+import { calcDailyProgress, calcMemberAnnual, calcMemberMonthly } from '@/utils/calculator';
 import { buildMemberAnnualCsv, buildMemberPayoutCsv, downloadCsv } from '@/utils/csv';
 import { formatPercent, formatYen } from '@/utils/format';
 import {
@@ -35,11 +32,8 @@ interface Props {
   records: SaleRecord[];
   month: string;
   onMonthChange: (month: string) => void;
-  /** 対象月の手入力値 */
-  inputs: MonthlyInputs;
-  onInputsChange: (patch: Partial<MonthlyInputs>) => void;
-  /** 通期計算に使う月別入力 */
-  inputsByMonth: Record<string, MonthlyInputs>;
+  /** 月次入力（スプレッドシート保存） */
+  monthlyInputs: UseMonthlyInputsResult;
   /** 当月（未到来の月をグラフから落とすのに使う） */
   currentMonth: string;
 }
@@ -50,72 +44,34 @@ interface Props {
  */
 function OwnInputPanel({
   member,
-  inputs,
-  onInputsChange,
-}: Pick<Props, 'member' | 'inputs' | 'onInputsChange'>) {
-  const expenses = inputs.expenses ?? {};
-  const placements = inputs.placements ?? { ad: 0, referral: 0 };
-  const deptId = member.deptId;
-
-  const setExpense = (patch: Partial<{ directExpense: number; headcount: number }>) => {
-    onInputsChange({
-      expenses: {
-        ...expenses,
-        [deptId]: { directExpense: 0, headcount: 0, ...expenses[deptId], ...patch },
-      },
-    });
-  };
-
+  monthlyInputs,
+}: Pick<Props, 'member' | 'monthlyInputs'>) {
   return (
     <div className="card p-4 print:hidden">
       <h2 className="text-sm font-bold text-slate-800">当月の入力（自分の事業部分）</h2>
       <p className="mt-0.5 text-xs text-slate-500">
-        経費と件数はスプレッドシートに載らないため、ここで入力する。入力値はこのブラウザに
-        月別で保存され、営業利益とインセンティブの計算に使われる。
+        経費と件数はスプレッドシートに載らないため、ここで入力する。
+        {monthlyInputs.serverBacked
+          ? '保存するとスプレッドシートに書き込まれ、締めの数字に反映される。'
+          : 'いまはこのブラウザにだけ保存されている。'}
       </p>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <NumberField
-          label={deptId === 'hr' ? '直接経費（広告/コンサル）' : '経費'}
-          value={expenses[deptId]?.directExpense ?? 0}
-          onChange={(v) => setExpense({ directExpense: v })}
-          suffix="円"
-        />
+      {!monthlyInputs.serverBacked && (
+        <p className="mt-2.5 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-600" />
+          <span>
+            入力がこの端末にしか残らない状態です。管理者に GAS の更新を依頼してください。
+          </span>
+        </p>
+      )}
 
-        {deptId === 'hr' && (
-          <>
-            <NumberField
-              label="人数（概算固定費 10万/人）"
-              value={expenses.hr?.headcount ?? 0}
-              onChange={(v) => setExpense({ headcount: v })}
-              suffix="人"
-            />
-            <NumberField
-              label="決定件数 広告経由（1万/件）"
-              value={placements.ad}
-              onChange={(v) => onInputsChange({ placements: { ...placements, ad: v } })}
-              suffix="件"
-            />
-            <NumberField
-              label="決定件数 リファーラル（3万/件）"
-              value={placements.referral}
-              onChange={(v) => onInputsChange({ placements: { ...placements, referral: v } })}
-              suffix="件"
-            />
-            <NumberField
-              label="個人直接経費（個人PL用）"
-              value={inputs.personalDirectExpense ?? 0}
-              onChange={(v) => onInputsChange({ personalDirectExpense: v })}
-              suffix="円"
-            />
-          </>
-        )}
-
-        <NumberField
-          label="月間売上目標"
-          value={inputs.monthlySalesTarget ?? 0}
-          onChange={(v) => onInputsChange({ monthlySalesTarget: v })}
-          suffix="円"
+      <div className="mt-3">
+        <DeptInputCard
+          deptId={member.deptId}
+          record={monthlyInputs.rowFor(member.deptId)}
+          onSave={monthlyInputs.save}
+          saving={monthlyInputs.saving}
+          showHeading={false}
         />
       </div>
     </div>
@@ -127,17 +83,16 @@ export function PersonalView({
   records,
   month,
   onMonthChange,
-  inputs,
-  onInputsChange,
-  inputsByMonth,
+  monthlyInputs,
   currentMonth,
 }: Props) {
-  const result = calcMemberMonthly(records, month, member.id, inputs);
-  const annual = calcMemberAnnual(records, member.id, inputsByMonth);
+  const result = calcMemberMonthly(records, month, member.id, monthlyInputs.inputs);
+  const annual = calcMemberAnnual(records, member.id, monthlyInputs.allInputs);
   const payout = result.payout;
 
   const incentiveTotal = (payout?.breakdown ?? []).reduce((a, l) => a + l.amount, 0);
-  const monthlySalesTarget = inputs.monthlySalesTarget ?? 0;
+  // 自分の事業部に入れた月間売上目標
+  const monthlySalesTarget = monthlyInputs.rowFor(member.deptId).salesTarget;
 
   // 本人担当売上を棒、所属事業部の営業利益を折れ線にする（どちらも円なので同じ軸）
   const trend = trimToElapsedMonths(
@@ -403,7 +358,7 @@ export function PersonalView({
         </p>
       )}
 
-      <OwnInputPanel member={member} inputs={inputs} onInputsChange={onInputsChange} />
+      <OwnInputPanel member={member} monthlyInputs={monthlyInputs} />
     </div>
   );
 }
