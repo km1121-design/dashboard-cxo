@@ -14,11 +14,14 @@
  */
 import type {
   ApiResult,
+  DeptInputRecord,
   GasApiConfig,
   GasGetResponse,
   GasGetSuccess,
   GasPostBody,
+  GasPostData,
   GasPostResponse,
+  MonthlyNoteRecord,
   SaleRecord,
   SaleRecordInput,
 } from '@/types';
@@ -87,6 +90,38 @@ export function normalizeSaleRecord(raw: Partial<SaleRecord>, index = 0): SaleRe
   };
 }
 
+/** 月次の手入力を型に沿って正規化する（空セルは 0 / 空文字に落とす） */
+export function normalizeDeptInput(raw: Partial<DeptInputRecord>): DeptInputRecord {
+  const toNum = (v: unknown): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  return {
+    month: String(raw.month ?? '').slice(0, 7),
+    dept: String(raw.dept ?? ''),
+    directExpense: toNum(raw.directExpense),
+    headcount: toNum(raw.headcount),
+    placementAd: toNum(raw.placementAd),
+    placementReferral: toNum(raw.placementReferral),
+    personalDirectExpense: toNum(raw.personalDirectExpense),
+    salesTarget: toNum(raw.salesTarget),
+    salesBudget: toNum(raw.salesBudget),
+    profitBudget: toNum(raw.profitBudget),
+  };
+}
+
+/** 会議メモを正規化する */
+export function normalizeMonthlyNote(raw: Partial<MonthlyNoteRecord>): MonthlyNoteRecord {
+  return {
+    month: String(raw.month ?? '').slice(0, 7),
+    summary: String(raw.summary ?? ''),
+    decision: String(raw.decision ?? ''),
+    owner: String(raw.owner ?? ''),
+    due: String(raw.due ?? ''),
+  };
+}
+
 /* ============================================================================
  * GET: 売上ログ取得
  * ========================================================================== */
@@ -141,6 +176,10 @@ export async function fetchSales(config: GasApiConfig): Promise<ApiResult<GasGet
         timestamp: body.timestamp,
         count: sales.length,
         sales,
+        // シート対応前のデプロイでは返ってこないため、未定義のままにして
+        // 呼び出し側が「対応済みかどうか」を判別できるようにする
+        deptInputs: body.deptInputs?.map(normalizeDeptInput),
+        notes: body.notes?.map(normalizeMonthlyNote),
         viewer: body.viewer,
       },
     };
@@ -162,6 +201,15 @@ export async function postSale(
   config: GasApiConfig,
   record: SaleRecordInput,
   action: GasPostBody['action'] = 'addSale',
+): Promise<ApiResult<GasPostResponse>> {
+  return postToGas(config, action, record);
+}
+
+/** doPost を 1 回叩く。アクションごとの薄いラッパから呼ぶ */
+async function postToGas(
+  config: GasApiConfig,
+  action: GasPostBody['action'],
+  record: GasPostData,
 ): Promise<ApiResult<GasPostResponse>> {
   if (!config.baseUrl) {
     return { ok: false, error: 'GAS API URL が未設定です（VITE_GAS_API_URL）。' };
@@ -218,6 +266,25 @@ export function postDailyReport(
   record: SaleRecordInput,
 ): Promise<ApiResult<GasPostResponse>> {
   return postSale(config, record, 'addReport');
+}
+
+/**
+ * 月次の手入力を保存する（月 × 事業部で上書き）。
+ * 自分の事業部以外は GAS 側で拒否される。
+ */
+export function saveDeptInput(
+  config: GasApiConfig,
+  record: DeptInputRecord,
+): Promise<ApiResult<GasPostResponse>> {
+  return postToGas(config, 'saveDeptInput', record);
+}
+
+/** 会議メモを保存する（月で上書き）。全社を見られる人だけが実行できる */
+export function saveMonthlyNote(
+  config: GasApiConfig,
+  record: MonthlyNoteRecord,
+): Promise<ApiResult<GasPostResponse>> {
+  return postToGas(config, 'saveNote', record);
 }
 
 /** レコード ID を生成する（GAS 側の既定と同じ `DS` + epoch ミリ秒） */

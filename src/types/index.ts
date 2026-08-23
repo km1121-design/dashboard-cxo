@@ -122,6 +122,49 @@ export interface SaleRecord {
   sheetRow?: number;
 }
 
+/**
+ * 月次の手入力（`t_dept_inputs` の 1 行 = 1月 × 1事業部）。
+ *
+ * 売上ログに載らない値をここに置く。スプレッドシートに保存されるため、
+ * 端末を変えても全員が同じ数字を見る。
+ */
+export interface DeptInputRecord {
+  /** `YYYY-MM` */
+  month: string;
+  /** 事業部の表示名（`t_sales` の「事業部」列と同じ値） */
+  dept: string;
+  /** 直接経費 */
+  directExpense: number;
+  /** 概算固定費の頭数（人材事業部） */
+  headcount: number;
+  /** 決定件数 広告経由（人材事業部） */
+  placementAd: number;
+  /** 決定件数 リファーラル（人材事業部） */
+  placementReferral: number;
+  /** 個人PL算出に使う本人の直接経費（人材事業部） */
+  personalDirectExpense: number;
+  /** 月間売上目標（日割り進捗に使う） */
+  salesTarget: number;
+  /** 売上計画（予実の計画値） */
+  salesBudget: number;
+  /** 営業利益計画（予実の計画値） */
+  profitBudget: number;
+}
+
+/** 会議メモ（`t_monthly_notes` の 1 行 = 1月）。全社を見られる人だけが読み書きする */
+export interface MonthlyNoteRecord {
+  /** `YYYY-MM` */
+  month: string;
+  /** 所感 */
+  summary: string;
+  /** 決定事項 */
+  decision: string;
+  /** 担当 */
+  owner: string;
+  /** 期限（`YYYY-MM-DD` または自由記述） */
+  due: string;
+}
+
 /** POST 時に送る 1 レコード（sheetRow を持たない） */
 export type SaleRecordInput = Omit<SaleRecord, 'sheetRow'>;
 
@@ -151,6 +194,10 @@ export interface GasGetSuccess {
   timestamp: string;
   count: number;
   sales: SaleRecord[];
+  /** 月次の手入力。シート対応前のデプロイでは返ってこない */
+  deptInputs?: DeptInputRecord[];
+  /** 会議メモ。Manager には空配列で返る */
+  notes?: MonthlyNoteRecord[];
   /** 閲覧者。Google 認証を入れる前のデプロイでは返ってこない */
   viewer?: ServerViewer;
 }
@@ -171,12 +218,15 @@ export type GasGetResponse = GasGetSuccess | GasErrorResponse;
 export type GasPostResponse = GasPostSuccess | GasErrorResponse;
 
 /** doPost が受け付けるアクション（Code.gs 準拠） */
-export type GasAction = 'addSale' | 'addReport';
+export type GasAction = 'addSale' | 'addReport' | 'saveDeptInput' | 'saveNote';
+
+/** doPost で送れるレコード */
+export type GasPostData = SaleRecordInput | DeptInputRecord | MonthlyNoteRecord;
 
 /** doPost のリクエストボディ */
 export interface GasPostBody {
   action: GasAction;
-  data: SaleRecordInput;
+  data: GasPostData;
   /** アクセストークン。GAS 側で AUTH_TOKEN が設定されている場合に必須 */
   token?: string;
   /** Google の ID トークン。GAS 側で GOOGLE_CLIENT_ID が設定されている場合に必須 */
@@ -337,8 +387,23 @@ export interface DeptPlRow {
   expense: number;
   laborCost: number;
   operatingProfit: number;
-  /** 目標に対する達成率（0–1 以上） */
+  /**
+   * 報酬ルールの閾値（`DEPTS[].monthlyProfitTarget`）に対する達成率。
+   * インセンティブの発動判定と同じ基準で、経営の計画値とは別物。
+   */
   achievementRate: number;
+  /**
+   * 計画値が入力されているか。
+   * 売上計画・営業利益計画のどちらかが 0 以外なら「入力済み」とみなす
+   * （物流のように計画そのものが赤字の事業部があるため、符号では判定できない）。
+   */
+  hasBudget: boolean;
+  /** 売上計画（月次入力）。未入力なら 0 */
+  salesBudget: number;
+  /** 営業利益計画（月次入力）。未入力なら 0 */
+  profitBudget: number;
+  /** 営業利益の予実差異（実績 − 計画）。計画が未入力なら 0 */
+  profitVariance: number;
 }
 
 /** 月次サマリ（月別結果ビュー） */
@@ -352,6 +417,12 @@ export interface MonthlySummary {
   payouts: MemberPayout[];
   /** 当月の半年プール積立合計 */
   bonusPoolAccrual: number;
+  /** 売上計画の合計 */
+  salesBudget: number;
+  /** 営業利益計画の合計 */
+  profitBudget: number;
+  /** 営業利益の予実差異（実績 − 計画） */
+  profitVariance: number;
 }
 
 /** 日別進捗サマリ（日別進捗ビュー） */

@@ -53,6 +53,24 @@
  *  検証には外部リクエストを使うため、初回実行時に承認を求められる。
  */
 const SHEET_NAME_SALES = 't_sales';
+
+/**
+ * 月次の手入力シート。
+ *
+ * - `t_dept_inputs`   事業部ごとの経費・件数・目標・計画（1行 = 1月 × 1事業部）
+ * - `t_monthly_notes` 会議の所感と決定事項（1行 = 1月）
+ *
+ * どちらも無ければ初回アクセス時に見出し付きで自動作成する。
+ */
+const SHEET_NAME_DEPT_INPUTS = 't_dept_inputs';
+const SHEET_NAME_MONTHLY_NOTES = 't_monthly_notes';
+
+const HEADER_DEPT_INPUTS = [
+  '月', '事業部', '経費', '人数', '決定件数_広告', '決定件数_リファーラル',
+  '個人直接経費', '売上目標', '売上計画', '営業利益計画', '更新日時'
+];
+
+const HEADER_MONTHLY_NOTES = ['月', '所感', '決定事項', '担当', '期限', '更新日時'];
 const AUTH_TOKEN_PROPERTY = 'AUTH_TOKEN';
 const SPREADSHEET_ID_PROPERTY = 'SPREADSHEET_ID';
 const GOOGLE_CLIENT_ID_PROPERTY = 'GOOGLE_CLIENT_ID';
@@ -382,6 +400,138 @@ function getOrCreateSalesSheet(ss) {
   return sheet;
 }
 
+/** 見出し付きでシートを用意する（既にあればそのまま返す） */
+function getOrCreateSheet(ss, name, header) {
+  let sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(header);
+    sheet.getRange(1, 1, 1, header.length).setFontWeight('bold').setBackground('#f3f4f6');
+  }
+  return sheet;
+}
+
+/** `YYYY-MM` に正規化する。日付セルとして解釈された場合にも対応する */
+function normalizeMonthKey(value) {
+  if (value instanceof Date) {
+    return value.getFullYear() + '-' + ('0' + (value.getMonth() + 1)).slice(-2);
+  }
+  return String(value || '').trim().slice(0, 7);
+}
+
+/* ==========================================================================
+ * 月次の手入力（事業部別）
+ * ========================================================================== */
+
+function getDeptInputsAsJson(sheet) {
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+
+  return data.slice(1)
+    .filter(function (row) { return String(row[0] || '').trim() !== ''; })
+    .map(function (row) {
+      return {
+        month: normalizeMonthKey(row[0]),
+        dept: String(row[1] || ''),
+        directExpense: Number(row[2]) || 0,
+        headcount: Number(row[3]) || 0,
+        placementAd: Number(row[4]) || 0,
+        placementReferral: Number(row[5]) || 0,
+        personalDirectExpense: Number(row[6]) || 0,
+        salesTarget: Number(row[7]) || 0,
+        salesBudget: Number(row[8]) || 0,
+        profitBudget: Number(row[9]) || 0
+      };
+    });
+}
+
+/** 月 × 事業部で 1 行に上書き保存する（無ければ追記） */
+function upsertDeptInput(sheet, record) {
+  const month = normalizeMonthKey(record.month);
+  const dept = String(record.dept || '').trim();
+  if (!month || !dept) throw new Error('月と事業部は必須です');
+
+  const row = [
+    month,
+    dept,
+    Number(record.directExpense) || 0,
+    Number(record.headcount) || 0,
+    Number(record.placementAd) || 0,
+    Number(record.placementReferral) || 0,
+    Number(record.personalDirectExpense) || 0,
+    Number(record.salesTarget) || 0,
+    Number(record.salesBudget) || 0,
+    Number(record.profitBudget) || 0,
+    new Date().toLocaleString('ja-JP')
+  ];
+
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (normalizeMonthKey(data[i][0]) === month && String(data[i][1] || '').trim() === dept) {
+      sheet.getRange(i + 1, 1, 1, row.length).setValues([row]);
+      return 'updated';
+    }
+  }
+
+  sheet.appendRow(row);
+  return 'inserted';
+}
+
+/* ==========================================================================
+ * 会議メモ（月次）
+ * ========================================================================== */
+
+function getMonthlyNotesAsJson(sheet) {
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+
+  return data.slice(1)
+    .filter(function (row) { return String(row[0] || '').trim() !== ''; })
+    .map(function (row) {
+      return {
+        month: normalizeMonthKey(row[0]),
+        summary: String(row[1] || ''),
+        decision: String(row[2] || ''),
+        owner: String(row[3] || ''),
+        due: row[4] instanceof Date ? formatDate(row[4]) : String(row[4] || '')
+      };
+    });
+}
+
+/** 月で 1 行に上書き保存する（無ければ追記） */
+function upsertMonthlyNote(sheet, record) {
+  const month = normalizeMonthKey(record.month);
+  if (!month) throw new Error('月は必須です');
+
+  const row = [
+    month,
+    String(record.summary || ''),
+    String(record.decision || ''),
+    String(record.owner || ''),
+    String(record.due || ''),
+    new Date().toLocaleString('ja-JP')
+  ];
+
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (normalizeMonthKey(data[i][0]) === month) {
+      sheet.getRange(i + 1, 1, 1, row.length).setValues([row]);
+      return 'updated';
+    }
+  }
+
+  sheet.appendRow(row);
+  return 'inserted';
+}
+
+/**
+ * 会議メモを読み書きしてよいか。
+ * 所感と決定事項は全社の経営情報なので、事業部だけを見るメンバーには渡さない。
+ */
+function canAccessNotes(identity) {
+  return identity.scope !== 'personal';
+}
+
 function doGet(e) {
   try {
     // ?idToken=...（Google 認証）または ?token=...（従来の合言葉）で本人を確定する
@@ -397,11 +547,25 @@ function doGet(e) {
       return canReadRow(identity, row);
     });
 
+    // 月次の手入力。Manager には自分の事業部の行だけを返す
+    const deptInputs = getDeptInputsAsJson(
+      getOrCreateSheet(ss, SHEET_NAME_DEPT_INPUTS, HEADER_DEPT_INPUTS)
+    ).filter(function (row) {
+      return identity.scope !== 'personal' || row.dept === identity.dept;
+    });
+
+    // 会議メモは全社の経営情報なので Manager には渡さない
+    const notes = canAccessNotes(identity)
+      ? getMonthlyNotesAsJson(getOrCreateSheet(ss, SHEET_NAME_MONTHLY_NOTES, HEADER_MONTHLY_NOTES))
+      : [];
+
     const result = {
       status: 'success',
       timestamp: new Date().toISOString(),
       count: salesData.length,
       sales: salesData,
+      deptInputs: deptInputs,
+      notes: notes,
       viewer: toViewerPayload(identity)
     };
 
@@ -463,6 +627,41 @@ function doPost(e) {
       return ContentService.createTextOutput(JSON.stringify({ status: 'success', message: 'スプレッドシートへ追記しました' }))
         .setMimeType(ContentService.MimeType.JSON);
     }
+
+    // 月次の手入力（経費・件数・目標・計画）。自分の事業部の行だけ書ける
+    if (postData.action === 'saveDeptInput') {
+      const record = postData.data || {};
+
+      if (!canWriteRecord(identity, record)) {
+        return unauthorizedResponse(identity.dept + ' 以外の事業部の入力は保存できません。');
+      }
+
+      const result = upsertDeptInput(
+        getOrCreateSheet(ss, SHEET_NAME_DEPT_INPUTS, HEADER_DEPT_INPUTS),
+        record
+      );
+
+      return ContentService.createTextOutput(
+        JSON.stringify({ status: 'success', message: '月次入力を保存しました（' + result + '）' })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 会議メモ。全社を見られる人だけが書ける
+    if (postData.action === 'saveNote') {
+      if (!canAccessNotes(identity)) {
+        return unauthorizedResponse('会議メモを編集する権限がありません。');
+      }
+
+      const result = upsertMonthlyNote(
+        getOrCreateSheet(ss, SHEET_NAME_MONTHLY_NOTES, HEADER_MONTHLY_NOTES),
+        postData.data || {}
+      );
+
+      return ContentService.createTextOutput(
+        JSON.stringify({ status: 'success', message: '会議メモを保存しました（' + result + '）' })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
     return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: '不明なアクションです' }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {

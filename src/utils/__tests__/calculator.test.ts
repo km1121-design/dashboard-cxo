@@ -2,7 +2,7 @@
  * 計算エンジンのテスト（引き継ぎ指示書 5章／6章 の数式・数値をそのまま検証）
  */
 import { BAR_CATEGORY, FISCAL_START_MONTH, RULES } from '@/constants/master';
-import type { DailyReportInput, SaleRecord } from '@/types';
+import type { DailyReportInput, DeptInputRecord, SaleRecord } from '@/types';
 import {
   buildCarryOver,
   buildEventMemberPayout,
@@ -27,10 +27,13 @@ import {
   calcTotalSummary,
   ceilTo,
   effectiveAmount,
+  findDeptSalesTarget,
   filterByDept,
   resolvePlRate,
   sumEffective,
   sumGross,
+  toMonthlyInputs,
+  toMonthlyInputsByMonth,
 } from '@/utils/calculator';
 
 /* ------------------------------------------------------------- テストデータ */
@@ -681,5 +684,186 @@ describe('第5期の集計範囲', () => {
       sale({ date: '2027-08-01', category: BAR_CATEGORY, gross: 400_000 }),
     ]);
     expect(total.grossSales).toBe(0);
+  });
+});
+
+/* ============================================================================
+ * 月次入力（スプレッドシート由来）の畳み込みと予実
+ * ========================================================================== */
+
+function deptRow(month: string, dept: string, over: Partial<DeptInputRecord> = {}): DeptInputRecord {
+  return {
+    month,
+    dept,
+    directExpense: 0,
+    headcount: 0,
+    placementAd: 0,
+    placementReferral: 0,
+    personalDirectExpense: 0,
+    salesTarget: 0,
+    salesBudget: 0,
+    profitBudget: 0,
+    ...over,
+  };
+}
+
+describe('toMonthlyInputs', () => {
+  const rows = [
+    deptRow('2026-08', 'イベント営業', { directExpense: 120_000, salesTarget: 360_000, salesBudget: 3_000_000, profitBudget: 1_200_000 }),
+    deptRow('2026-08', '人材', { directExpense: 200_000, headcount: 2, placementAd: 3, placementReferral: 1, personalDirectExpense: 50_000, profitBudget: 800_000 }),
+    deptRow('2026-09', 'イベント営業', { directExpense: 999_999 }),
+  ];
+
+  it('対象月の行だけを畳み込む', () => {
+    const inputs = toMonthlyInputs(rows, '2026-08');
+
+    expect(inputs.expenses?.event).toEqual({ directExpense: 120_000, headcount: 0 });
+    expect(inputs.expenses?.hr).toEqual({ directExpense: 200_000, headcount: 2 });
+    expect(inputs.expenses?.logistics).toBeUndefined();
+  });
+
+  it('決定件数と個人直接経費を拾う', () => {
+    const inputs = toMonthlyInputs(rows, '2026-08');
+
+    expect(inputs.placements).toEqual({ ad: 3, referral: 1 });
+    expect(inputs.personalDirectExpense).toBe(50_000);
+  });
+
+  it('売上目標は全事業部の合計になる', () => {
+    const inputs = toMonthlyInputs(
+      [
+        deptRow('2026-08', 'イベント営業', { salesTarget: 360_000 }),
+        deptRow('2026-08', '人材', { salesTarget: 140_000 }),
+      ],
+      '2026-08',
+    );
+    expect(inputs.monthlySalesTarget).toBe(500_000);
+  });
+
+  it('計画値を事業部ごとに持つ', () => {
+    const inputs = toMonthlyInputs(rows, '2026-08');
+
+    expect(inputs.budgets?.event).toEqual({ salesBudget: 3_000_000, profitBudget: 1_200_000 });
+    expect(inputs.budgets?.hr).toEqual({ salesBudget: 0, profitBudget: 800_000 });
+  });
+
+  it('知らない事業部名は経費に混ぜない', () => {
+    const inputs = toMonthlyInputs([deptRow('2026-08', '謎の部署', { directExpense: 500 })], '2026-08');
+    expect(inputs.expenses).toEqual({});
+  });
+
+  it('該当月が無ければ空の入力を返す', () => {
+    const inputs = toMonthlyInputs(rows, '2026-12');
+
+    expect(inputs.expenses).toEqual({});
+    expect(inputs.monthlySalesTarget).toBe(0);
+  });
+
+  it('月ごとにまとめられる', () => {
+    const byMonth = toMonthlyInputsByMonth(rows);
+
+    expect(Object.keys(byMonth).sort()).toEqual(['2026-08', '2026-09']);
+    expect(byMonth['2026-09'].expenses?.event?.directExpense).toBe(999_999);
+  });
+});
+
+describe('findDeptSalesTarget', () => {
+  const rows = [
+    deptRow('2026-08', 'イベント営業', { salesTarget: 360_000 }),
+    deptRow('2026-08', '人材', { salesTarget: 140_000 }),
+  ];
+
+  it('事業部ごとの目標を引ける', () => {
+    expect(findDeptSalesTarget(rows, '2026-08', 'event')).toBe(360_000);
+    expect(findDeptSalesTarget(rows, '2026-08', 'hr')).toBe(140_000);
+  });
+
+  it('未入力なら 0', () => {
+    expect(findDeptSalesTarget(rows, '2026-08', 'logistics')).toBe(0);
+    expect(findDeptSalesTarget(rows, '2026-09', 'event')).toBe(0);
+  });
+});
+
+describe('予実差異', () => {
+  const records = [sale({ date: '2026-08-05', category: BAR_CATEGORY, gross: 1_500_000 })];
+
+  it('計画があれば差異を出す', () => {
+    // イベント営業の営業利益 = 1,500,000 − 320,000 − 20,000 = 1,160,000
+    const summary = calcMonthlySummary(records, '2026-08', {
+      budgets: { event: { salesBudget: 1_800_000, profitBudget: 1_000_000 } },
+    });
+    const event = summary.deptRows.find((r) => r.deptId === 'event');
+
+    expect(event?.profitBudget).toBe(1_000_000);
+    expect(event?.profitVariance).toBe(160_000);
+    expect(summary.profitBudget).toBe(1_000_000);
+    expect(summary.salesBudget).toBe(1_800_000);
+  });
+
+  it('計画が未入力なら差異は 0（実績が差異として出てしまわない）', () => {
+    const summary = calcMonthlySummary(records, '2026-08');
+
+    expect(summary.profitBudget).toBe(0);
+    expect(summary.profitVariance).toBe(0);
+    expect(summary.deptRows.every((r) => r.profitVariance === 0)).toBe(true);
+  });
+
+  it('計画に届かなければマイナスになる', () => {
+    const summary = calcMonthlySummary(records, '2026-08', {
+      budgets: { event: { salesBudget: 0, profitBudget: 2_000_000 } },
+    });
+    expect(summary.deptRows.find((r) => r.deptId === 'event')?.profitVariance).toBe(-840_000);
+  });
+
+  it('報酬ルールの達成率は計画に影響されない', () => {
+    const withBudget = calcMonthlySummary(records, '2026-08', {
+      budgets: { event: { salesBudget: 0, profitBudget: 5_000_000 } },
+    });
+    const without = calcMonthlySummary(records, '2026-08');
+
+    // どちらも DEPTS[].monthlyProfitTarget（100万）に対する達成率
+    expect(withBudget.deptRows[0].achievementRate).toBe(without.deptRows[0].achievementRate);
+    expect(withBudget.deptRows[0].achievementRate).toBeCloseTo(1.16, 6);
+  });
+});
+
+describe('予実差異 — 計画が赤字の事業部', () => {
+  const records = [
+    sale({ date: '2026-08-05', category: BAR_CATEGORY, gross: 1_500_000 }),
+    sale({ date: '2026-08-06', dept: '物流・バックヤード', category: '物流', member: '三田 航大', gross: 180_000 }),
+  ];
+
+  const budgets = {
+    event: { salesBudget: 2_200_000, profitBudget: 900_000 },
+    // 物流は構造的に赤字。マイナスの計画を「未入力」と誤判定しないこと
+    logistics: { salesBudget: 200_000, profitBudget: -150_000 },
+  };
+
+  it('マイナスの計画も入力済みとして扱う', () => {
+    const summary = calcMonthlySummary(records, '2026-08', { budgets });
+    const logistics = summary.deptRows.find((r) => r.deptId === 'logistics');
+
+    expect(logistics?.hasBudget).toBe(true);
+    expect(logistics?.profitBudget).toBe(-150_000);
+    // 実績 = 売上180,000 + 保守費徴収50,000 − 固定報酬400,000 = -170,000
+    // 差異 = -170,000 − 計画 -150,000 = -20,000
+    expect(logistics?.operatingProfit).toBe(-170_000);
+    expect(logistics?.profitVariance).toBe(-20_000);
+  });
+
+  it('計画が未入力の事業部は差異を出さない', () => {
+    const summary = calcMonthlySummary(records, '2026-08', { budgets });
+    const hr = summary.deptRows.find((r) => r.deptId === 'hr');
+
+    expect(hr?.hasBudget).toBe(false);
+    expect(hr?.profitVariance).toBe(0);
+  });
+
+  it('全社の差異は事業部の差異の合計と一致する（カードと表がずれない）', () => {
+    const summary = calcMonthlySummary(records, '2026-08', { budgets });
+    const rowSum = summary.deptRows.reduce((a, r) => a + r.profitVariance, 0);
+
+    expect(summary.profitVariance).toBe(rowSum);
+    expect(summary.profitBudget).toBe(750_000);
   });
 });

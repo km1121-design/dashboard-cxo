@@ -56,8 +56,18 @@ export default function App() {
   const [localViewer, setLocalViewer] = useState(resolveInitialViewer);
 
   const sales = useSalesData({ idToken: auth.idToken, ready: signedIn });
-  const { inputs, update, allInputs } = useMonthlyInputs(month);
-  const dailyInputs = useMonthlyInputs(toMonthKey(date)).inputs;
+
+  // 月次入力はスプレッドシートに保存する。GAS が未対応なら端末内に退避する
+  const monthlyInputs = useMonthlyInputs({
+    month,
+    serverRows: sales.deptInputs,
+    onSave: sales.saveDeptInput,
+  });
+  const dailyInputs = useMonthlyInputs({
+    month: toMonthKey(date),
+    serverRows: sales.deptInputs,
+    onSave: sales.saveDeptInput,
+  });
 
   const changeViewer = useCallback((id: ViewerId) => {
     setStoredViewer(id, false);
@@ -221,9 +231,7 @@ export default function App() {
             records={sales.records}
             month={month}
             onMonthChange={setMonth}
-            inputs={inputs}
-            onInputsChange={update}
-            inputsByMonth={allInputs}
+            monthlyInputs={monthlyInputs}
             currentMonth={currentMonth}
           />
         ) : (
@@ -233,7 +241,7 @@ export default function App() {
                 records={sales.records}
                 date={date}
                 onDateChange={setDate}
-                monthlySalesTarget={dailyInputs.monthlySalesTarget ?? 0}
+                monthlySalesTarget={dailyInputs.inputs.monthlySalesTarget ?? 0}
               />
             )}
 
@@ -242,15 +250,16 @@ export default function App() {
                 records={sales.records}
                 month={month}
                 onMonthChange={setMonth}
-                inputs={inputs}
-                onInputsChange={update}
+                monthlyInputs={monthlyInputs}
+                notes={sales.notes}
+                onSaveNote={sales.saveNote}
               />
             )}
 
             {mode === 'total' && (
               <TotalView
                 records={sales.records}
-                inputsByMonth={allInputs}
+                inputsByMonth={monthlyInputs.allInputs}
                 currentMonth={currentMonth}
               />
             )}
@@ -277,7 +286,7 @@ export default function App() {
           records={sales.records}
           onSubmit={sales.addReport}
           submitting={sales.state === 'loading'}
-          defaultMonthlyTarget={dailyInputs.monthlySalesTarget ?? 360_000}
+          defaultMonthlyTarget={dailyInputs.rowFor('event').salesTarget || 360_000}
           defaultMember={personal?.name}
         />
       )}

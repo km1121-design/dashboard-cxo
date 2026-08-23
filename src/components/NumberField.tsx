@@ -7,10 +7,22 @@ interface Props {
   /** 入力欄の右端に薄く表示する単位（円・名・日 など） */
   suffix?: string;
   min?: number;
+  /**
+   * マイナスを許すか。既定は 0 以上（金額・件数はマイナスにならない）。
+   * 営業利益計画のように赤字を置く欄でだけ true にする。
+   */
+  allowNegative?: boolean;
 }
 
 /** ラベルと input を id で紐づけた数値入力欄 */
-export function NumberField({ label, value, onChange, suffix, min = 0 }: Props) {
+export function NumberField({
+  label,
+  value,
+  onChange,
+  suffix,
+  min = 0,
+  allowNegative = false,
+}: Props) {
   const id = useId();
 
   return (
@@ -22,7 +34,7 @@ export function NumberField({ label, value, onChange, suffix, min = 0 }: Props) 
         <input
           id={id}
           type="number"
-          min={min}
+          min={allowNegative ? undefined : min}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
           className={`input ${suffix ? 'pr-8' : ''}`}

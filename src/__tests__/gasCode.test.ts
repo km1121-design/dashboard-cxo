@@ -21,27 +21,38 @@ const HEADER = [
 
 interface FakeSpreadsheet {
   label: string;
-  rows: unknown[][];
+  /** シート名 → 行。`t_sales` 以外は Code.gs が必要に応じて作る */
+  sheets: Record<string, unknown[][]>;
 }
 
 function makeSpreadsheet(label: string, rows: unknown[][] = [HEADER]): FakeSpreadsheet {
-  return { label, rows };
+  return { label, sheets: { t_sales: rows } };
 }
 
-function sheetOf(ss: FakeSpreadsheet) {
+/** シート 1 枚分のスタブ。upsert のための setValues も持たせる */
+function sheetOf(ss: FakeSpreadsheet, name: string) {
+  const rows = () => ss.sheets[name];
   return {
-    appendRow: (r: unknown[]) => ss.rows.push(r),
-    getDataRange: () => ({ getValues: () => ss.rows }),
-    getRange: () => ({ setFontWeight: () => ({ setBackground: () => undefined }) }),
+    appendRow: (r: unknown[]) => rows().push(r),
+    getDataRange: () => ({ getValues: () => rows() }),
+    getRange: (row: number, col: number, _numRows: number, numCols: number) => ({
+      setFontWeight: () => ({ setBackground: () => undefined }),
+      setValues: (values: unknown[][]) => {
+        const target = rows()[row - 1];
+        for (let i = 0; i < numCols; i++) target[col - 1 + i] = values[0][i];
+      },
+    }),
   };
 }
 
 function wrap(ss: FakeSpreadsheet) {
-  const sheet = sheetOf(ss);
   return {
     label: ss.label,
-    getSheetByName: (n: string) => (n === 't_sales' ? sheet : null),
-    insertSheet: () => sheet,
+    getSheetByName: (n: string) => (ss.sheets[n] ? sheetOf(ss, n) : null),
+    insertSheet: (n: string) => {
+      ss.sheets[n] = [];
+      return sheetOf(ss, n);
+    },
   };
 }
 
@@ -518,5 +529,209 @@ describe('resolveIdentity', () => {
     // CacheService が使える本番では 2 回目はキャッシュに当たる
     expect(fetched).toHaveLength(2);
     expect(fetched[0]).toContain('id_token=t');
+  });
+});
+
+/* ==========================================================================
+ * 月次の手入力（t_dept_inputs）と会議メモ（t_monthly_notes）
+ * ========================================================================== */
+
+const DEPT_INPUT_HEADER = [
+  '月', '事業部', '経費', '人数', '決定件数_広告', '決定件数_リファーラル',
+  '個人直接経費', '売上目標', '売上計画', '営業利益計画', '更新日時',
+];
+
+function deptInput(month: string, dept: string, over: Record<string, unknown> = {}) {
+  return {
+    month,
+    dept,
+    directExpense: 0,
+    headcount: 0,
+    placementAd: 0,
+    placementReferral: 0,
+    personalDirectExpense: 0,
+    salesTarget: 0,
+    salesBudget: 0,
+    profitBudget: 0,
+    ...over,
+  };
+}
+
+function postAs(api: GasApi, idToken: string, action: string, data: unknown) {
+  return parse(api.doPost({ postData: { contents: JSON.stringify({ action, idToken, data }) } }));
+}
+
+describe('月次の手入力シート', () => {
+  it('シートが無ければ見出し付きで作られ、空で返る', () => {
+    const ss = makeSpreadsheet('bound', [HEADER]);
+    const { api } = load({ active: ss, props: GOOGLE_PROPS, tokenInfo: { t: { aud: CLIENT_ID, email: 'mita@gooner.space' } } });
+
+    const body = parse(api.doGet({ parameter: { idToken: 't' } }));
+
+    expect(body.deptInputs).toEqual([]);
+    expect(body.notes).toEqual([]);
+    expect(ss.sheets['t_dept_inputs'][0]).toEqual(DEPT_INPUT_HEADER);
+    expect(ss.sheets['t_monthly_notes'][0]).toEqual(['月', '所感', '決定事項', '担当', '期限', '更新日時']);
+  });
+
+  it('保存した入力が読み出せる', () => {
+    const { api } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'mita@gooner.space' } });
+
+    const saved = postAs(api, 't', 'saveDeptInput', deptInput('2026-08', 'イベント営業', {
+      directExpense: 120_000,
+      salesBudget: 3_000_000,
+      profitBudget: 1_200_000,
+    }));
+    expect(saved.status).toBe('success');
+
+    const body = parse(api.doGet({ parameter: { idToken: 't' } }));
+    expect(body.deptInputs).toHaveLength(1);
+    expect(body.deptInputs[0]).toMatchObject({
+      month: '2026-08',
+      dept: 'イベント営業',
+      directExpense: 120_000,
+      salesBudget: 3_000_000,
+      profitBudget: 1_200_000,
+    });
+  });
+
+  it('同じ月・同じ事業部は上書きされ、行が増えない', () => {
+    const ss = makeSpreadsheet('bound', [HEADER]);
+    const { api } = load({ active: ss, props: GOOGLE_PROPS, tokenInfo: { t: { aud: CLIENT_ID, email: 'mita@gooner.space' } } });
+
+    postAs(api, 't', 'saveDeptInput', deptInput('2026-08', 'イベント営業', { directExpense: 100 }));
+    postAs(api, 't', 'saveDeptInput', deptInput('2026-08', 'イベント営業', { directExpense: 999 }));
+
+    // 見出し + 1 行
+    expect(ss.sheets['t_dept_inputs']).toHaveLength(2);
+
+    const body = parse(api.doGet({ parameter: { idToken: 't' } }));
+    expect(body.deptInputs).toHaveLength(1);
+    expect(body.deptInputs[0].directExpense).toBe(999);
+  });
+
+  it('月が違えば別の行になる', () => {
+    const { api } = loadWithGoogle({ t: { aud: CLIENT_ID, email: 'mita@gooner.space' } });
+
+    postAs(api, 't', 'saveDeptInput', deptInput('2026-08', 'イベント営業', { directExpense: 100 }));
+    postAs(api, 't', 'saveDeptInput', deptInput('2026-09', 'イベント営業', { directExpense: 200 }));
+
+    const body = parse(api.doGet({ parameter: { idToken: 't' } }));
+    expect(body.deptInputs.map((r: { month: string }) => r.month)).toEqual(['2026-08', '2026-09']);
+  });
+
+  it('日付セルとして入っていても YYYY-MM として読む', () => {
+    const ss = makeSpreadsheet('bound', [HEADER]);
+    ss.sheets['t_dept_inputs'] = [
+      DEPT_INPUT_HEADER,
+      [new Date(2026, 7, 1), 'イベント営業', 50_000, 0, 0, 0, 0, 0, 0, 0, ''],
+    ];
+    const { api } = load({ active: ss, props: GOOGLE_PROPS, tokenInfo: { t: { aud: CLIENT_ID, email: 'mita@gooner.space' } } });
+
+    const body = parse(api.doGet({ parameter: { idToken: 't' } }));
+    expect(body.deptInputs[0].month).toBe('2026-08');
+  });
+
+  it('空行は読み飛ばす', () => {
+    const ss = makeSpreadsheet('bound', [HEADER]);
+    ss.sheets['t_dept_inputs'] = [
+      DEPT_INPUT_HEADER,
+      ['', '', '', '', '', '', '', '', '', '', ''],
+      ['2026-08', '人材', 10, 1, 0, 0, 0, 0, 0, 0, ''],
+    ];
+    const { api } = load({ active: ss, props: GOOGLE_PROPS, tokenInfo: { t: { aud: CLIENT_ID, email: 'mita@gooner.space' } } });
+
+    expect(parse(api.doGet({ parameter: { idToken: 't' } })).deptInputs).toHaveLength(1);
+  });
+});
+
+describe('月次入力の権限', () => {
+  function seeded() {
+    const ss = makeSpreadsheet('bound', [HEADER]);
+    ss.sheets['t_dept_inputs'] = [
+      DEPT_INPUT_HEADER,
+      ['2026-08', 'イベント営業', 100, 0, 0, 0, 0, 0, 0, 0, ''],
+      ['2026-08', '人材', 200, 1, 0, 0, 0, 0, 0, 0, ''],
+    ];
+    ss.sheets['t_monthly_notes'] = [
+      ['月', '所感', '決定事項', '担当', '期限', '更新日時'],
+      ['2026-08', '好調', '来月は広告費を増やす', '中原', '2026-09-30', ''],
+    ];
+    return ss;
+  }
+
+  const tokens = {
+    admin: { aud: CLIENT_ID, email: 'mita@gooner.space' },
+    irifune: { aud: CLIENT_ID, email: 'irifune@gooner.space' },
+    nakahara: { aud: CLIENT_ID, email: 'nakahara@gooner.space' },
+  };
+
+  function api(ss: FakeSpreadsheet) {
+    return load({ active: ss, props: GOOGLE_PROPS, tokenInfo: tokens }).api;
+  }
+
+  it('Admin は全事業部の入力と会議メモを読める', () => {
+    const body = parse(api(seeded()).doGet({ parameter: { idToken: 'admin' } }));
+
+    expect(body.deptInputs).toHaveLength(2);
+    expect(body.notes).toHaveLength(1);
+    expect(body.notes[0].decision).toBe('来月は広告費を増やす');
+  });
+
+  it('Manager は自分の事業部の入力しか読めない', () => {
+    const body = parse(api(seeded()).doGet({ parameter: { idToken: 'irifune' } }));
+
+    expect(body.deptInputs).toHaveLength(1);
+    expect(body.deptInputs[0].dept).toBe('イベント営業');
+  });
+
+  it('Manager には会議メモを渡さない', () => {
+    const body = parse(api(seeded()).doGet({ parameter: { idToken: 'nakahara' } }));
+    expect(body.notes).toEqual([]);
+  });
+
+  it('Manager は自分の事業部の入力を保存できる', () => {
+    const body = postAs(api(seeded()), 'irifune', 'saveDeptInput',
+      deptInput('2026-09', 'イベント営業', { directExpense: 300 }));
+    expect(body.status).toBe('success');
+  });
+
+  it('Manager は他事業部の入力を保存できない', () => {
+    const body = postAs(api(seeded()), 'irifune', 'saveDeptInput',
+      deptInput('2026-09', '人材', { directExpense: 300 }));
+
+    expect(body.status).toBe('error');
+    expect(body.message).toContain('イベント営業 以外');
+  });
+
+  it('Manager は会議メモを保存できない', () => {
+    const body = postAs(api(seeded()), 'irifune', 'saveNote',
+      { month: '2026-08', summary: 'かってに書く' });
+
+    expect(body.status).toBe('error');
+    expect(body.message).toContain('権限がありません');
+  });
+
+  it('Admin は会議メモを上書きできる', () => {
+    const ss = seeded();
+    const body = postAs(api(ss), 'admin', 'saveNote', {
+      month: '2026-08',
+      summary: '差し替え',
+      decision: '継続',
+      owner: '入舩',
+      due: '2026-09-15',
+    });
+
+    expect(body.status).toBe('success');
+    // 見出し + 1 行のまま
+    expect(ss.sheets['t_monthly_notes']).toHaveLength(2);
+
+    const after = parse(api(ss).doGet({ parameter: { idToken: 'admin' } }));
+    expect(after.notes[0]).toMatchObject({ summary: '差し替え', owner: '入舩', due: '2026-09-15' });
+  });
+
+  it('月が無い入力は保存できない', () => {
+    const body = postAs(api(seeded()), 'admin', 'saveDeptInput', deptInput('', 'イベント営業'));
+    expect(body.status).toBe('error');
   });
 });

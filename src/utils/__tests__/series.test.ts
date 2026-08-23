@@ -155,6 +155,10 @@ describe('buildDeptMix', () => {
         laborCost: 0,
         operatingProfit: 0,
         achievementRate: 0,
+        hasBudget: false,
+        salesBudget: 0,
+        profitBudget: 0,
+        profitVariance: 0,
       },
       {
         deptId: 'hq',
@@ -165,6 +169,10 @@ describe('buildDeptMix', () => {
         laborCost: 0,
         operatingProfit: 0,
         achievementRate: 0,
+        hasBudget: false,
+        salesBudget: 0,
+        profitBudget: 0,
+        profitVariance: 0,
       },
     ]);
 
@@ -183,6 +191,9 @@ describe('buildMonthlyTrend / buildMemberTrend', () => {
         deptRows: [],
         payouts: [],
         bonusPoolAccrual: 0,
+        salesBudget: 0,
+        profitBudget: 0,
+        profitVariance: 0,
       },
     ]);
 

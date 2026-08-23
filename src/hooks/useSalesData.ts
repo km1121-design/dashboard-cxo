@@ -4,8 +4,22 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getDefaultConfig, SYNC_INTERVAL_MS } from '@/lib/env';
-import { fetchSales, postDailyReport, postSale } from '@/lib/gasApi';
-import type { GasApiConfig, SaleRecord, SaleRecordInput, ServerViewer, SyncState } from '@/types';
+import {
+  fetchSales,
+  postDailyReport,
+  postSale,
+  saveDeptInput as postDeptInput,
+  saveMonthlyNote as postMonthlyNote,
+} from '@/lib/gasApi';
+import type {
+  DeptInputRecord,
+  GasApiConfig,
+  MonthlyNoteRecord,
+  SaleRecord,
+  SaleRecordInput,
+  ServerViewer,
+  SyncState,
+} from '@/types';
 
 export interface UseSalesDataOptions {
   /** Google 認証の ID トークン。変わるたびに取り直す */
@@ -23,6 +37,14 @@ export interface UseSalesDataResult {
   records: SaleRecord[];
   /** GAS が返した閲覧者。Google 認証を入れる前のデプロイでは null */
   serverViewer: ServerViewer | null;
+  /** 月次の手入力。シート対応前のデプロイでは null */
+  deptInputs: DeptInputRecord[] | null;
+  /** 会議メモ。Manager には空配列で返る */
+  notes: MonthlyNoteRecord[];
+  /** 月次の手入力を保存して再同期する */
+  saveDeptInput: (record: DeptInputRecord) => Promise<boolean>;
+  /** 会議メモを保存して再同期する */
+  saveNote: (record: MonthlyNoteRecord) => Promise<boolean>;
   state: SyncState;
   error: string | null;
   /** 最終同期時刻 */
@@ -47,6 +69,8 @@ export function useSalesData(options: UseSalesDataOptions = {}): UseSalesDataRes
 
   const [records, setRecords] = useState<SaleRecord[]>([]);
   const [serverViewer, setServerViewer] = useState<ServerViewer | null>(null);
+  const [deptInputs, setDeptInputs] = useState<DeptInputRecord[] | null>(null);
+  const [notes, setNotes] = useState<MonthlyNoteRecord[]>([]);
   const [state, setState] = useState<SyncState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
@@ -72,6 +96,8 @@ export function useSalesData(options: UseSalesDataOptions = {}): UseSalesDataRes
     if (result.ok) {
       setRecords(result.data.sales);
       setServerViewer(result.data.viewer ?? null);
+      setDeptInputs(result.data.deptInputs ?? null);
+      setNotes(result.data.notes ?? []);
       setLastSyncedAt(new Date());
       setState('success');
     } else {
@@ -106,6 +132,40 @@ export function useSalesData(options: UseSalesDataOptions = {}): UseSalesDataRes
   const addSale = useCallback((r: SaleRecordInput) => post(r, 'sale'), [post]);
   const addReport = useCallback((r: SaleRecordInput) => post(r, 'report'), [post]);
 
+  /** 保存系はどれも「送る → 失敗ならエラー表示 → 成功なら取り直す」で同じ */
+  const save = useCallback(
+    async <T>(
+      record: T,
+      send: (config: GasApiConfig, record: T) => Promise<{ ok: boolean; error?: string }>,
+    ): Promise<boolean> => {
+      if (!ready) return false;
+
+      setState('loading');
+      setError(null);
+
+      const result = await send(resolveConfig(), record);
+      if (!result.ok) {
+        setError(result.error ?? '保存に失敗しました。');
+        setState('error');
+        return false;
+      }
+
+      await sync();
+      return true;
+    },
+    [ready, resolveConfig, sync],
+  );
+
+  const saveDeptInput = useCallback(
+    (record: DeptInputRecord) => save(record, postDeptInput),
+    [save],
+  );
+
+  const saveNote = useCallback(
+    (record: MonthlyNoteRecord) => save(record, postMonthlyNote),
+    [save],
+  );
+
   // 初回ロード
   useEffect(() => {
     void sync();
@@ -121,6 +181,10 @@ export function useSalesData(options: UseSalesDataOptions = {}): UseSalesDataRes
   return {
     records,
     serverViewer,
+    deptInputs,
+    notes,
+    saveDeptInput,
+    saveNote,
     state,
     error,
     lastSyncedAt,

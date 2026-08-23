@@ -99,7 +99,10 @@ export function buildMemberPayoutCsv(result: MemberMonthlyResult): string {
 
 export function buildDeptPlCsv(summary: MonthlySummary): string {
   const rows: CsvValue[][] = [
-    ['月', '事業部', '額面売上', '実質PL売上', '経費', '人件費', '営業利益', '目標達成率'],
+    [
+      '月', '事業部', '額面売上', '実質PL売上', '経費', '人件費', '営業利益',
+      '目標達成率', '売上計画', '営業利益計画', '予実差異',
+    ],
   ];
 
   for (const r of summary.deptRows) {
@@ -112,6 +115,9 @@ export function buildDeptPlCsv(summary: MonthlySummary): string {
       r.laborCost,
       r.operatingProfit,
       r.achievementRate > 0 ? r.achievementRate.toFixed(4) : '',
+      r.salesBudget,
+      r.profitBudget,
+      r.hasBudget ? r.profitVariance : '',
     ]);
   }
 

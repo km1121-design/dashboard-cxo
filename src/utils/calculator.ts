@@ -18,6 +18,7 @@ import {
 import type {
   AnnualMemberSimulation,
   DailyProgressSummary,
+  DeptInputRecord,
   DailyReportCarryOver,
   DailyReportComputed,
   DailyReportInput,
@@ -451,10 +452,20 @@ export function buildLogisticsMemberPayout(result: LogisticsDeptResult): MemberP
  * 7. 月次サマリ（指示書 3章「月別結果」）
  * ========================================================================== */
 
+/** 事業部ごとの計画値（予実の「予」） */
+export interface DeptBudget {
+  /** 売上計画 */
+  salesBudget: number;
+  /** 営業利益計画 */
+  profitBudget: number;
+}
+
 /** 月次計算に必要な、売上ログ外の手入力値 */
 export interface MonthlyInputs {
   /** 事業部ごとの経費入力 */
   expenses?: Partial<Record<DeptId, DeptExpenseInput>>;
+  /** 事業部ごとの計画値。未指定の事業部は予実を出さない */
+  budgets?: Partial<Record<DeptId, DeptBudget>>;
   /** 人材事業部の決定件数 */
   placements?: PlacementCounts;
   /** 人材事業部 個人PL算出のための本人直接経費 */
@@ -463,6 +474,70 @@ export interface MonthlyInputs {
   crossSellBarRecords?: SaleRecord[];
   /** 月間売上目標（日別進捗の日割り計算に使用） */
   monthlySalesTarget?: number;
+}
+
+/**
+ * スプレッドシートの月次入力（1行 = 1月 × 1事業部）を、計算エンジンが受け取る形に畳む。
+ *
+ * 決定件数と個人直接経費は人材事業部の行にしか入らないが、
+ * 取りこぼしを避けるため全行を合算している。
+ */
+export function toMonthlyInputs(rows: DeptInputRecord[], monthKey: string): MonthlyInputs {
+  const target = rows.filter((r) => r.month === monthKey);
+
+  const expenses: Partial<Record<DeptId, DeptExpenseInput>> = {};
+  const budgets: Partial<Record<DeptId, DeptBudget>> = {};
+  let placementAd = 0;
+  let placementReferral = 0;
+  let personalDirectExpense = 0;
+  let monthlySalesTarget = 0;
+
+  for (const row of target) {
+    const deptId = DEPT_ID_BY_LABEL[row.dept] ?? (row.dept as DeptId);
+    if (DEPT_BY_ID[deptId]) {
+      expenses[deptId] = {
+        directExpense: num(row.directExpense),
+        headcount: num(row.headcount),
+      };
+      budgets[deptId] = {
+        salesBudget: num(row.salesBudget),
+        profitBudget: num(row.profitBudget),
+      };
+    }
+
+    placementAd += num(row.placementAd);
+    placementReferral += num(row.placementReferral);
+    personalDirectExpense += num(row.personalDirectExpense);
+    monthlySalesTarget += num(row.salesTarget);
+  }
+
+  return {
+    expenses,
+    budgets,
+    placements: { ad: placementAd, referral: placementReferral },
+    personalDirectExpense,
+    monthlySalesTarget,
+  };
+}
+
+/** 月次入力を月キーごとにまとめる（通期の集計に渡す形） */
+export function toMonthlyInputsByMonth(rows: DeptInputRecord[]): Record<string, MonthlyInputs> {
+  const months = Array.from(new Set(rows.map((r) => r.month))).filter(Boolean);
+  return months.reduce<Record<string, MonthlyInputs>>((acc, month) => {
+    acc[month] = toMonthlyInputs(rows, month);
+    return acc;
+  }, {});
+}
+
+/** 事業部 1 つ分の月間売上目標を取り出す（個人ビューの日割り目標に使う） */
+export function findDeptSalesTarget(
+  rows: DeptInputRecord[],
+  monthKey: string,
+  deptId: DeptId,
+): number {
+  const label = DEPT_BY_ID[deptId]?.label;
+  const row = rows.find((r) => r.month === monthKey && (r.dept === label || r.dept === deptId));
+  return num(row?.salesTarget);
 }
 
 const EMPTY_EXPENSE: DeptExpenseInput = { directExpense: 0, headcount: 0 };
@@ -474,9 +549,16 @@ function buildDeptRow(
   expense: number,
   laborCost: number,
   operatingProfit: number,
+  budget: DeptBudget = { salesBudget: 0, profitBudget: 0 },
 ): DeptPlRow {
   const dept = DEPT_BY_ID[deptId];
   const target = dept.monthlyProfitTarget;
+
+  const salesBudget = num(budget.salesBudget);
+  const profitBudget = num(budget.profitBudget);
+  // 物流のように計画が赤字の事業部があるので、符号ではなく「何か入っているか」で見る
+  const hasBudget = salesBudget !== 0 || profitBudget !== 0;
+
   return {
     deptId,
     deptLabel: dept.label,
@@ -486,6 +568,11 @@ function buildDeptRow(
     laborCost,
     operatingProfit,
     achievementRate: target > 0 ? operatingProfit / target : 0,
+    hasBudget,
+    salesBudget,
+    profitBudget,
+    // 計画が入っていない月に「実績ぶんの黒字」が出ないよう 0 のままにする
+    profitVariance: hasBudget ? operatingProfit - profitBudget : 0,
   };
 }
 
@@ -513,6 +600,9 @@ export function calcMonthlySummary(
   });
   const logistics = calcLogisticsDept();
 
+  const budgetOf = (deptId: DeptId): DeptBudget =>
+    inputs.budgets?.[deptId] ?? { salesBudget: 0, profitBudget: 0 };
+
   const deptRows: DeptPlRow[] = [
     buildDeptRow(
       'event',
@@ -520,6 +610,7 @@ export function calcMonthlySummary(
       event.expense,
       event.baseSalary + event.maintenanceFee,
       event.operatingProfit,
+      budgetOf('event'),
     ),
     buildDeptRow(
       'hr',
@@ -527,6 +618,7 @@ export function calcMonthlySummary(
       hr.directExpense,
       hr.baseSalary + hr.estimatedFixedCost + hr.maintenanceFee,
       hr.operatingProfit,
+      budgetOf('hr'),
     ),
     buildDeptRow(
       'logistics',
@@ -539,8 +631,9 @@ export function calcMonthlySummary(
           num(logisticsExpense.directExpense) -
           logistics.fixedCompensation,
       ),
+      budgetOf('logistics'),
     ),
-    buildDeptRow('hq', hqRecords, 0, 0, roundYen(sumEffective(hqRecords))),
+    buildDeptRow('hq', hqRecords, 0, 0, roundYen(sumEffective(hqRecords)), budgetOf('hq')),
   ];
 
   const payouts: MemberPayout[] = [
@@ -557,6 +650,10 @@ export function calcMonthlySummary(
     deptRows,
     payouts,
     bonusPoolAccrual: sum(payouts.map((p) => p.bonusPoolAccrual)),
+    // 事業部の行を足し上げる。カードと表で数字が食い違わないよう、必ず同じ足し方にする
+    salesBudget: sum(deptRows.map((r) => r.salesBudget)),
+    profitBudget: sum(deptRows.map((r) => r.profitBudget)),
+    profitVariance: sum(deptRows.map((r) => r.profitVariance)),
   };
 }
 

@@ -9,8 +9,28 @@ export function DeptPLTable({ rows }: { rows: DeptPlRow[] }) {
       expense: acc.expense + r.expense,
       laborCost: acc.laborCost + r.laborCost,
       operatingProfit: acc.operatingProfit + r.operatingProfit,
+      profitBudget: acc.profitBudget + r.profitBudget,
+      profitVariance: acc.profitVariance + r.profitVariance,
     }),
-    { grossSales: 0, effectiveSales: 0, expense: 0, laborCost: 0, operatingProfit: 0 },
+    {
+      grossSales: 0,
+      effectiveSales: 0,
+      expense: 0,
+      laborCost: 0,
+      operatingProfit: 0,
+      profitBudget: 0,
+      profitVariance: 0,
+    },
+  );
+
+  /** 計画が 1 つも入っていない月は、予実の列を出さない */
+  const hasBudget = rows.some((r) => r.hasBudget);
+
+  const variance = (value: number) => (
+    <span className={value >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+      {value >= 0 ? '+' : ''}
+      {formatYen(value)}
+    </span>
   );
 
   return (
@@ -19,6 +39,9 @@ export function DeptPLTable({ rows }: { rows: DeptPlRow[] }) {
         <h2 className="text-sm font-bold text-slate-800">事業部別 損益（PL）</h2>
         <p className="mt-0.5 text-xs text-slate-500">
           実質売上は転職支援を 50% 計上した金額。人件費には基本給・概算固定費・保守費を含む。
+          {hasBudget
+            ? '差異は営業利益の実績 − 計画。'
+            : '月次入力に営業利益計画を入れると、予実の差異が出る。'}
         </p>
       </div>
 
@@ -59,6 +82,22 @@ export function DeptPLTable({ rows }: { rows: DeptPlRow[] }) {
                   {row.achievementRate > 0 ? formatPercent(row.achievementRate) : '—'}
                 </dd>
               </div>
+              {hasBudget && (
+                <>
+                  <div className="flex justify-between">
+                    <dt>利益計画</dt>
+                    <dd className="tabular text-slate-600">
+                      {row.hasBudget ? formatYen(row.profitBudget) : '—'}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt>予実差異</dt>
+                    <dd className="tabular">
+                      {row.hasBudget ? variance(row.profitVariance) : '—'}
+                    </dd>
+                  </div>
+                </>
+              )}
             </dl>
           </li>
         ))}
@@ -85,6 +124,12 @@ export function DeptPLTable({ rows }: { rows: DeptPlRow[] }) {
               <th className="px-4 py-2.5 text-right font-medium">人件費</th>
               <th className="px-4 py-2.5 text-right font-medium">営業利益</th>
               <th className="px-4 py-2.5 text-right font-medium">目標達成率</th>
+              {hasBudget && (
+                <>
+                  <th className="px-4 py-2.5 text-right font-medium">利益計画</th>
+                  <th className="px-4 py-2.5 text-right font-medium">予実差異</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -113,6 +158,16 @@ export function DeptPLTable({ rows }: { rows: DeptPlRow[] }) {
                 <td className="tabular px-4 py-2.5 text-right text-slate-500">
                   {row.achievementRate > 0 ? formatPercent(row.achievementRate) : '—'}
                 </td>
+                {hasBudget && (
+                  <>
+                    <td className="tabular px-4 py-2.5 text-right text-slate-500">
+                      {row.hasBudget ? formatYen(row.profitBudget) : '—'}
+                    </td>
+                    <td className="tabular px-4 py-2.5 text-right font-medium">
+                      {row.hasBudget ? variance(row.profitVariance) : '—'}
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -139,6 +194,16 @@ export function DeptPLTable({ rows }: { rows: DeptPlRow[] }) {
                 {formatYen(total.operatingProfit)}
               </td>
               <td className="px-4 py-2.5" />
+              {hasBudget && (
+                <>
+                  <td className="tabular px-4 py-2.5 text-right text-slate-600">
+                    {formatYen(total.profitBudget)}
+                  </td>
+                  <td className="tabular px-4 py-2.5 text-right">
+                    {variance(total.profitVariance)}
+                  </td>
+                </>
+              )}
             </tr>
           </tfoot>
         </table>
