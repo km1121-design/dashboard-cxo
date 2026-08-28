@@ -8,11 +8,18 @@ on:
     paths:
       - 'gas/**'
       - '.github/workflows/deploy-gas.yml'
+      - '.github/scripts/report-gas-deploy.cjs'
   workflow_dispatch:
 
 concurrency:
   group: deploy-gas
   cancel-in-progress: false
+
+# 失敗を Issue と PR に残すために書き込みが要る（それ以外は読み取りのみ）
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   deploy:
@@ -86,18 +93,47 @@ jobs:
             }, null, 2));
           "
 
+      # 失敗したときに原因を Issue へ載せるため、出力を控えておく。
+      # pipefail が無いと tee の成功で clasp の失敗が握り潰される。
       - name: Apps Script へ push
-        run: npx --yes @google/clasp@3.3.0 push --force --auth .clasprc.json --project .clasp.json
+        run: |
+          set -o pipefail
+          npx --yes @google/clasp@3.3.0 push --force --auth .clasprc.json --project .clasp.json \
+            2>&1 | tee -a deploy-gas.log
 
       - name: 既存デプロイを更新（/exec URL は変わらない）
         env:
           DEPLOYMENT_ID: ${{ vars.GAS_DEPLOYMENT_ID }}
         run: |
+          set -o pipefail
           npx --yes @google/clasp@3.3.0 redeploy "$DEPLOYMENT_ID" \
             --auth .clasprc.json \
             --project .clasp.json \
-            --description "GitHub Actions ${{ github.sha }}"
+            --description "GitHub Actions ${{ github.sha }}" \
+            2>&1 | tee -a deploy-gas.log
 
       - name: 認証情報を削除
         if: always()
         run: rm -f .clasprc.json .clasp.json
+
+      # サイト側のデプロイは成功するため、この失敗は見落とされやすい。
+      # 変更を取り込んだ PR と追跡用 Issue に残して気づけるようにする。
+      - name: 失敗を Issue と PR に残す
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = require('./.github/scripts/report-gas-deploy.cjs');
+            const log = fs.existsSync('deploy-gas.log')
+              ? fs.readFileSync('deploy-gas.log', 'utf8')
+              : '';
+            await report({ github, context, core }, { succeeded: false, log });
+
+      - name: 復旧したら追跡 Issue を閉じる
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = require('./.github/scripts/report-gas-deploy.cjs');
+            await report({ github, context, core }, { succeeded: true });

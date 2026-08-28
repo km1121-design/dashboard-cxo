@@ -22,10 +22,10 @@ Claude Code の新規セッションで作業を再開するための現状ま�
 | トークン認証 | 実測で保護を確認（未トークン・誤トークンとも拒否） |
 | `gas/` 変更 → Apps Script 自動デプロイ | 動作確認済み |
 | `src/` 変更 → GitHub Pages 自動公開 | 動作確認済み |
-| CI（型チェック・テスト・ビルド） | 通過（テスト 242 件） |
+| CI（型チェック・テスト・ビルド） | 通過（テスト 261 件） |
 | 閲覧者の切り分け（個人ビュー） | 実装済み |
 | Google アカウント認証 | コードは実装済み。**有効化には Google Cloud / Apps Script / GitHub の設定が必要**（docs/google-auth-setup.md） |
-| GAS 自動デプロイ（Deploy GAS） | **失敗中**。clasp の認証切れ（invalid_rapt）。gas/Code.gs の変更は Apps Script に未反映 |
+| GAS 自動デプロイ（Deploy GAS） | 復旧。失敗したら Issue と PR に自動で記録される |
 
 ---
 
@@ -121,17 +121,17 @@ docs/gas-deploy-setup.md    その手順書（他プロジェクトへ流用可�
 **2 と 4 は支給額に直結する。** 初回の月次締めで実際の数字と照合してほしい。
 変更は `src/constants/master.ts` と `src/utils/calculator.ts` の該当関数のみで済む。
 
-### GAS 自動デプロイが失敗している
+### GAS 自動デプロイの失敗と、その検知
 
-「Deploy GAS」ワークフローは clasp の認証切れ（`invalid_rapt`）で失敗する状態が続いている
-（2026-08-19 に手動で再認証して一度復旧したが、また切れている）。
-**サイト側のデプロイは成功するため気づきにくい**が、この間 `gas/Code.gs` の変更は
-Apps Script に反映されない。
+「Deploy GAS」は 2026-08-15 〜 08-20 にかけて clasp の認証切れ（`invalid_rapt`）で失敗していた。
+Google Cloud セッション管理の再認証ポリシー（16時間間隔）が効いていたためと見られる。
+現在は「再認証は要求しない」に設定されており、08-28 の実行は成功している。
 
-対処は 2 通り。手順は `docs/google-auth-setup.md` の B-1 にある。
+**サイト側のデプロイは成功するため、この失敗は見落としやすい。**
+再発時に気づけるよう、失敗すると追跡用 Issue と、変更を取り込んだ PR に自動でコメントが残る
+（次の成功で Issue は自動的に閉じる）。詳細は README の「自動デプロイが失敗したときの通知」。
 
-- Apps Script エディタに `gas/Code.gs` を貼り付ける（手軽）
-- `clasp logout` → `clasp login` → `./scripts/setup-gas-deploy.sh` で認証情報を更新する
+手作業で反映する場合の手順は `docs/google-auth-setup.md` の B-1 にある。
 
 **6・7・8 は今回の実装で残した割り切り。** 詳細と対処案は README の「仕様解釈のメモ」6〜7 と
 「閲覧者の切り分け」節にある。要点だけ:
