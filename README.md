@@ -71,6 +71,22 @@ bash scripts/setup-gas-deploy.sh --org 【Organization名】
 > このワークフローは `push`（main）と手動実行でのみ動き、Pull Request では動かないため、
 > フォークからの PR にシークレットが渡ることはない。
 
+### 自動デプロイが失敗したときの通知
+
+サイト側（Deploy to GitHub Pages）は成功するため、Apps Script への反映漏れは見落としやすい。
+Deploy GAS が失敗すると、次の 2 か所に自動で記録される。
+
+- **追跡用 Issue**「Apps Script への自動デプロイが失敗しています」— 直近のログと対処手順つき。
+  連続して失敗しても Issue は増えず、同じ Issue にコメントが足される
+- **変更を取り込んだ PR** — マージした本人が最初に見る場所なので、そこにも一言残す
+
+次にデプロイが成功したとき、この Issue は自動で閉じる。
+ログに載せる前にアクセストークン・リフレッシュトークンは伏せ字にしている。
+
+`invalid_rapt`（Google の再認証要求）など、よくある原因は Issue 本文で切り分け先まで案内する。
+通知の中身は `.github/scripts/report-gas-deploy.cjs`、テストは
+`src/__tests__/reportGasDeploy.test.ts` にある。
+
 ### GAS の手動デプロイ（自動デプロイを使わない場合）
 
 1. 対象スプレッドシート（`1lbLTY4HvNBeDsqqRmlzNmFSG_jAIR--VKgx0fd9pgTU`）を開き、
@@ -353,8 +369,8 @@ CSV は Excel で文字化けしないよう UTF-8 BOM 付き・CRLF 改行で�
 ## テスト
 
 ```
-Test Suites: 10 passed, 10 total
-Tests:       242 passed, 242 total
+Test Suites: 11 passed, 11 total
+Tests:       261 passed, 261 total
 ```
 
 計算エンジンは指示書の数式・閾値・サンプル値をそのままテストケースにしている。
